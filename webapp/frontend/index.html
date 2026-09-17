@@ -3,61 +3,123 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ResearchMate — Pattern Analyzer</title>
+<title>ResearchMate: Pattern Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>ResearchMate — Pattern Analyzer</h1>
-    <p class="subtitle">Standalone Pattern Finder stage: paste per-participant research notes, find recurring cross-participant patterns, then review before finalizing.</p>
-  </header>
+  <div class="app-shell">
 
-  <main>
-    <section id="input-section">
-      <h2>1. Per-participant research material</h2>
-      <div id="participants"></div>
-      <button id="add-participant" type="button">+ Add participant</button>
-      <button id="run-analysis" type="button" class="primary">Run Pattern Analysis</button>
-      <p id="input-error" class="error" hidden></p>
-    </section>
-
-    <section id="results-section" hidden>
-      <h2>2. Candidate patterns — review before they count</h2>
-      <p class="hint">Approve, edit, or reject each item. Nothing here is final until you finalize below.</p>
-
-      <div id="patterns-list"></div>
-
-      <h3>Single-participant findings</h3>
-      <p class="hint">Held by only one participant — not a cross-participant pattern.</p>
-      <div id="findings-list"></div>
-
-      <div id="flags-box" hidden>
-        <h3>Flags</h3>
-        <ul id="flags-list"></ul>
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <circle cx="6" cy="6" r="3" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="18" cy="6" r="3" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="12" cy="18" r="3" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M8.4 7.6L10.4 15.6M15.6 7.6L13.6 15.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div class="brand-text">
+          <span class="brand-name">ResearchMate</span>
+          <span class="brand-tagline">Pattern Analyzer</span>
+        </div>
       </div>
+      <div class="provider-pill" id="provider-pill" title="Configured in .env">
+        <span class="dot"></span>
+        <span id="provider-label">Checking provider...</span>
+      </div>
+    </header>
 
-      <p class="hint">Only items marked <strong>Approve</strong> are included below — if you edited an item's label, click Approve afterward to carry the edit forward.</p>
-      <button id="finalize" type="button" class="primary">Finalize approved output</button>
-    </section>
+    <nav class="stepper" aria-label="Pipeline progress">
+      <div class="step is-active" data-step="1">
+        <span class="step-index">1</span>
+        <span class="step-label">Research material</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step" data-step="2">
+        <span class="step-index">2</span>
+        <span class="step-label">Review patterns</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step" data-step="3">
+        <span class="step-index">3</span>
+        <span class="step-label">Final report</span>
+      </div>
+    </nav>
 
-    <section id="report-section" hidden>
-      <h2>3. Final report</h2>
-      <pre id="report-output"></pre>
-      <button id="download-report" type="button">Download as .md</button>
-    </section>
-  </main>
+    <main>
+      <section id="input-section" class="panel">
+        <div class="panel-head">
+          <h2>Per-participant research material</h2>
+          <p class="panel-sub">Paste each participant's analyzed notes: pain points, needs, behaviours, motivations. Include quote IDs so every claim stays traceable. At least two participants are needed to find a pattern.</p>
+        </div>
+
+        <div id="participants" class="participant-grid"></div>
+
+        <div class="panel-actions">
+          <button id="add-participant" type="button" class="btn btn-ghost">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            Add participant
+          </button>
+          <button id="run-analysis" type="button" class="btn btn-primary">
+            <span class="btn-label">Run pattern analysis</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </div>
+
+        <p id="input-error" class="error-banner" hidden></p>
+      </section>
+
+      <section id="results-section" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Candidate patterns</h2>
+          <p class="panel-sub">Nothing here is final. Approve, edit, or reject each item before it moves forward.</p>
+        </div>
+
+        <div id="patterns-list" class="card-stack"></div>
+
+        <div class="subsection-head">
+          <h3>Single-participant findings</h3>
+          <p class="panel-sub">Held by only one participant, so not counted as a cross-participant pattern.</p>
+        </div>
+        <div id="findings-list" class="card-stack"></div>
+
+        <div id="flags-box" class="flags-box" hidden>
+          <h3>Flags</h3>
+          <ul id="flags-list"></ul>
+        </div>
+
+        <div class="finalize-bar">
+          <p class="panel-sub">Only items marked <strong>Approve</strong> are included in the report. If you edited a label, click Approve afterward to carry the edit forward.</p>
+          <button id="finalize" type="button" class="btn btn-primary">Finalize approved output</button>
+        </div>
+      </section>
+
+      <section id="report-section" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Final report</h2>
+          <p class="panel-sub">A single, evidence-linked record of everything you approved.</p>
+        </div>
+        <pre id="report-output" class="report-output"></pre>
+        <div class="panel-actions">
+          <button id="download-report" type="button" class="btn btn-secondary">Download as .md</button>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <template id="participant-template">
-    <div class="participant-block">
-      <label>
-        Participant ID
-        <input type="text" class="participant-id" placeholder="e.g. P1" />
-      </label>
-      <label>
-        Research notes (paste per-participant analysis: pain points, needs, behaviours, motivations — with quote IDs)
-        <textarea class="participant-notes" rows="6" placeholder="P1-PP02 (pain point, cites P1-Q07): During finals I basically camp outside the silent room at 7am..."></textarea>
-      </label>
-      <button type="button" class="remove-participant">Remove</button>
+    <div class="participant-card">
+      <div class="participant-card-head">
+        <label class="field-label" for="">Participant ID</label>
+        <button type="button" class="remove-participant" aria-label="Remove participant">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <input type="text" class="participant-id" placeholder="e.g. P1" />
+      <label class="field-label">Research notes</label>
+      <textarea class="participant-notes" rows="6" placeholder="P1-PP02 (pain point, cites P1-Q07): During finals I basically camp outside the silent room at 7am..."></textarea>
     </div>
   </template>
 

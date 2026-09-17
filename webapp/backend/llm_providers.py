@@ -94,7 +94,7 @@ _MOCK_RESPONSE = """
       "category": "pain point",
       "evidence": [
         {"participant_id": "P1", "source_id": "P1-PP02", "source_type": "transcript quote", "text": "During finals I basically camp outside the silent room at 7am because if I don't, there's nowhere quiet left by 9."},
-        {"participant_id": "P3", "source_id": "P3-PP01", "source_type": "transcript quote", "text": "Exam week is the worst — every table is taken by 10am and group projects are talking everywhere."},
+        {"participant_id": "P3", "source_id": "P3-PP01", "source_type": "transcript quote", "text": "Exam week is the worst, every table is taken by 10am and group projects are talking everywhere."},
         {"participant_id": "P4", "source_id": "P4-PP03", "source_type": "transcript quote", "text": "I've started studying in my dorm instead because the library is just too loud when everyone's cramming."}
       ],
       "participant_coverage": "3/4 participants: P1, P3, P4",
@@ -114,7 +114,7 @@ _MOCK_RESPONSE = """
       "evidence_strength": "moderate: 2/4 participants, similar wording",
       "interpretation": null,
       "contradictions": [
-        {"participant_id": "P3", "source_id": "P3-PP04", "text": "I never book ahead, I just show up and take whatever's free — booking feels like more effort than it's worth."}
+        {"participant_id": "P3", "source_id": "P3-PP04", "text": "I never book ahead, I just show up and take whatever's free. Booking feels like more effort than it's worth."}
       ]
     }
   ],

@@ -57,3 +57,29 @@ Ran the backend directly (no browser automation available in this environment) v
 
 Not tested: the frontend's interactive review flow (approve/edit/reject button clicks, download) was not exercised in an actual browser — only the underlying API contract it depends on was verified directly.
 
+## Commit 4 — UI Redesign + Em Dash Cleanup
+
+**Date:** 17 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session (no per-task metering tool exposed to the assistant).
+
+### What shipped
+- Redesigned the standalone webapp's frontend as a proper product UI, not just a functional form:
+  - `webapp/frontend/index.html`: branded header with a live LLM-provider indicator pill, a 3-step progress tracker (research material, review patterns, final report), restructured panels per stage, and cleaner participant input cards.
+  - `webapp/frontend/style.css`: rebuilt from scratch as a small design system, color tokens, spacing/radius/shadow scale, category/coverage/strength badges, color-coded approve/edit/reject card states, button variants (primary/secondary/ghost), loading spinner, responsive breakpoint.
+  - `webapp/frontend/app.js`: updated to match the new markup, drives the step indicator based on pipeline progress, fetches and displays which provider is actually configured.
+- Added `GET /api/provider` to `webapp/backend/app.py` so the UI can show the researcher which LLM backend is live (reads `LLM_PROVIDER` / whichever API key is present, falls back to "mock").
+- Removed every em dash across the webapp (source, mock sample data, README), replaced with colons, commas, or periods depending on context, per user's style preference.
+
+### What broke / what changed
+- Nothing broke; this was a presentation-layer change on top of already-tested endpoints. Re-verified the analyze/finalize contract still matched the new frontend's expected field names after the rewrite (see test evidence).
+
+### Test evidence
+Restarted the Flask server and re-verified via PowerShell against `http://127.0.0.1:5000`:
+1. **Static serving:** `GET /`, `GET /style.css`, `GET /app.js` → all `200 OK` after the rewrite.
+2. **New endpoint:** `GET /api/provider` → returned `{"provider": "gemini"}`, matching the `.env` configuration from Commit 3.
+3. **Live Gemini regression check:** posted a fresh, previously-untested scenario (missing accessible-entrance signage) to `/api/analyze` → Gemini returned a correctly-shaped pattern (`PAT01`, `participant_coverage: "2/2 participants: P1, P2"`, populated `evidence`/`interpretation`/`evidence_strength` fields) confirming the redesigned frontend's expected JSON shape still matches the backend's actual response after the UI changes.
+4. **Em dash sweep:** `grep -rn "—" webapp/` across `.py`, `.js`, `.html`, `.css`, `.md` returned no matches.
+
+Not tested: the visual redesign itself (layout, colors, step indicator, badges, hover states) was not exercised in an actual browser, only the underlying HTML/CSS/JS files and the API contract they depend on were verified directly.
+

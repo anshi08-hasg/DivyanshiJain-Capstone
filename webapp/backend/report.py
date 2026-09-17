@@ -24,7 +24,7 @@ def _format_contradictions(contradictions: list[dict]) -> str:
 
 
 def build_report(patterns: list[dict], findings: list[dict]) -> str:
-    parts = ["# ResearchMate — Pattern Analysis Report", ""]
+    parts = ["# ResearchMate: Pattern Analysis Report", ""]
     parts.append(f"_{len(patterns)} approved pattern(s), {len(findings)} approved single-participant finding(s)._")
     parts.append("")
 
@@ -32,7 +32,7 @@ def build_report(patterns: list[dict], findings: list[dict]) -> str:
     if not patterns:
         parts.append("_No patterns approved._")
     for p in patterns:
-        parts.append(f"### {p.get('id')} — {p.get('label')}")
+        parts.append(f"### {p.get('id')}: {p.get('label')}")
         parts.append(f"- **Category:** {p.get('category')}")
         parts.append(f"- **Participant coverage:** {p.get('participant_coverage')}")
         parts.append(f"- **Evidence strength:** {p.get('evidence_strength')}")

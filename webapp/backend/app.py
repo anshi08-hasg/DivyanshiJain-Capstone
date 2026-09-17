@@ -23,6 +23,18 @@ def index():
     return app.send_static_file("index.html")
 
 
+@app.get("/api/provider")
+def provider():
+    name = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if not name:
+        name = "gemini" if os.environ.get("GEMINI_API_KEY") else (
+            "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else (
+                "openai" if os.environ.get("OPENAI_API_KEY") else "mock"
+            )
+        )
+    return jsonify({"provider": name})
+
+
 @app.post("/api/analyze")
 def analyze():
     data = request.get_json(force=True, silent=True) or {}
