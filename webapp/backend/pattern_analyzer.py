@@ -11,8 +11,8 @@ from llm_providers import get_provider
 
 SYSTEM_PROMPT = """You are the Pattern Analyzer for ResearchMate, a UX research synthesis tool.
 
-Your job is the "Pattern Finder" stage of the pipeline: compare per-participant
-qualitative research findings to surface recurring cross-participant patterns.
+Your job is the "Pattern Finder" stage of the pipeline: compare each
+participant's qualitative research findings to surface recurring cross-participant patterns.
 You do not interpret meaning beyond a clearly labeled inference, theme the
 patterns, generate personas, ideas, or recommendations.
 
@@ -85,7 +85,7 @@ def build_user_prompt(participants: list[dict]) -> str:
         notes = p.get("notes", "").strip()
         sections.append(f"### Participant {participant_id}\n{notes}")
     return (
-        "Per-participant research material follows, one section per participant.\n\n"
+        "Each participant's research notes follow, one section per participant.\n\n"
         + "\n\n".join(sections)
     )
 

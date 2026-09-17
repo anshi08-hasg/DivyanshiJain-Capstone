@@ -83,3 +83,23 @@ Restarted the Flask server and re-verified via PowerShell against `http://127.0.
 
 Not tested: the visual redesign itself (layout, colors, step indicator, badges, hover states) was not exercised in an actual browser, only the underlying HTML/CSS/JS files and the API contract they depend on were verified directly.
 
+## Commit 5 — Copy Polish: "Per-participant" Rewording
+
+**Date:** 17 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session (no per-task metering tool exposed to the assistant).
+
+### What shipped
+- Reworded the "Per-participant research material" panel heading in `webapp/frontend/index.html` to "Participant research notes": reads as a proper section label instead of a technical modifier, consistent with how the rest of the copy already refers to "each participant."
+- Applied the same phrasing fix for consistency across the product's voice, not just the one UI string:
+  - `webapp/backend/pattern_analyzer.py`: reworded the Gemini system prompt ("compare each participant's qualitative research findings...") and the prompt-builder's context header ("Each participant's research notes follow, one section per participant.").
+  - `webapp/README.md`: reworded step 1 of the Flow section ("Paste each participant's research notes...").
+
+### What broke / what changed
+- Nothing broke; this was a copy-only change with no logic or schema changes.
+
+### Test evidence
+- `grep -rni "per-participant" webapp/frontend/ webapp/backend/pattern_analyzer.py webapp/README.md` → zero matches, confirming the old phrasing was fully replaced in all three files.
+
+Not tested: did not restart the Flask server or reload the page in a browser to visually confirm the new heading renders, since this was a plain static-text change with no templating logic that could alter it at render time.
+
