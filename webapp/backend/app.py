@@ -12,15 +12,25 @@ from flask import Flask, jsonify, request
 
 from pattern_analyzer import analyze_patterns
 from report import build_report
+from figjam.research_agent import FigJamAgentError, analyze_research, ask_question, connect_board
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
 
+# In-memory, single-session state for the experimental FigJam agent (same
+# pattern as the Pattern Analyzer's module-level state: no DB for this MVP).
+_figjam_state: dict = {"context": None, "analysis": None, "activity": []}
+
 
 @app.get("/")
 def index():
     return app.send_static_file("index.html")
+
+
+@app.get("/figjam")
+def figjam_page():
+    return app.send_static_file("figjam.html")
 
 
 @app.get("/api/provider")
@@ -66,6 +76,76 @@ def finalize():
         "approved_patterns": patterns,
         "approved_findings": findings,
     })
+
+
+@app.post("/api/figjam/connect")
+def figjam_connect():
+    data = request.get_json(force=True, silent=True) or {}
+    board_ref = data.get("board_ref", "").strip() or "default"
+
+    try:
+        result = connect_board(board_ref)
+    except FigJamAgentError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    context = result["context"]
+    _figjam_state["context"] = context
+    _figjam_state["analysis"] = None
+    _figjam_state["activity"] = result["activity"]
+
+    return jsonify({
+        "overview": context.overview(),
+        "activity": result["activity"],
+        "is_demo": result["is_demo"],
+        "items": [i.to_dict() for i in context.items],
+    })
+
+
+@app.post("/api/figjam/analyze")
+def figjam_analyze():
+    context = _figjam_state.get("context")
+    if context is None:
+        return jsonify({"error": "Connect a FigJam board before running analysis."}), 400
+
+    try:
+        result = analyze_research(context)
+    except FigJamAgentError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:  # noqa: BLE001 - surface any unexpected provider error to the UI
+        return jsonify({"error": f"Gemini analysis failed: {exc}"}), 502
+
+    _figjam_state["analysis"] = result
+    _figjam_state["activity"] = _figjam_state["activity"] + result["activity"]
+
+    return jsonify({
+        "themes": result["themes"],
+        "insights": result["insights"],
+        "contradictions": result["contradictions"],
+        "research_gaps": result["research_gaps"],
+        "design_opportunities": result["design_opportunities"],
+        "activity": _figjam_state["activity"],
+    })
+
+
+@app.post("/api/figjam/ask")
+def figjam_ask():
+    data = request.get_json(force=True, silent=True) or {}
+    question = data.get("question", "").strip()
+
+    context = _figjam_state.get("context")
+    if context is None:
+        return jsonify({"error": "Connect a FigJam board before asking questions."}), 400
+    if not question:
+        return jsonify({"error": "Enter a question first."}), 400
+
+    try:
+        result = ask_question(context, _figjam_state.get("analysis"), question)
+    except FigJamAgentError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"Gemini failed to answer: {exc}"}), 502
+
+    return jsonify(result)
 
 
 if __name__ == "__main__":

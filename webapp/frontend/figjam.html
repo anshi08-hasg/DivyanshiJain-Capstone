@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ResearchMate: FigJam Research Agent (experimental)</title>
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="figjam.css" />
+</head>
+<body>
+  <div class="app-shell">
+
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <circle cx="6" cy="6" r="3" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="18" cy="6" r="3" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="12" cy="18" r="3" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M8.4 7.6L10.4 15.6M15.6 7.6L13.6 15.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div class="brand-text">
+          <span class="brand-name">ResearchMate</span>
+          <span class="brand-tagline">FigJam Research Agent (experimental)</span>
+        </div>
+      </div>
+      <a href="/" class="btn btn-ghost">Pattern Analyzer</a>
+    </header>
+
+    <p class="experiment-banner">
+      Experimental branch. No live Figma/FigJam MCP tool is available in this environment yet,
+      so "Connect FigJam" runs the full pipeline against a fixed demo research board instead of
+      a real one. Everything downstream (retrieval, normalization, Gemini analysis, the critic
+      pass, and evidence checks) is real and runs against whatever LLM provider is configured.
+    </p>
+
+    <main>
+      <section id="connect-section" class="panel">
+        <div class="panel-head">
+          <h2>Connect FigJam</h2>
+          <p class="panel-sub">Connect your FigJam research board and let the Research Agent analyze it.</p>
+        </div>
+        <div class="panel-actions">
+          <button id="connect-btn" type="button" class="btn btn-primary">
+            <span class="btn-label">Connect / Select FigJam</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </div>
+        <p id="connect-error" class="error-banner" hidden></p>
+      </section>
+
+      <section id="overview-section" class="panel" hidden>
+        <div class="panel-head">
+          <h2>FigJam research</h2>
+        </div>
+        <div id="overview-grid" class="overview-grid"></div>
+      </section>
+
+      <section id="activity-section" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Agent activity</h2>
+          <p class="panel-sub">Each line appears only after the operation actually happened.</p>
+        </div>
+        <ul id="activity-list" class="activity-list"></ul>
+        <div class="panel-actions">
+          <button id="run-analysis-btn" type="button" class="btn btn-primary">
+            <span class="btn-label">Analyze with Gemini</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </div>
+        <p id="analyze-error" class="error-banner" hidden></p>
+      </section>
+
+      <section id="results-section" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Themes</h2>
+        </div>
+        <div id="themes-list" class="card-stack"></div>
+
+        <div class="subsection-head">
+          <h3>Insights</h3>
+          <p class="panel-sub">Each insight has been challenged by a second Gemini pass (the Research Critic) before you see it.</p>
+        </div>
+        <div id="insights-list" class="card-stack"></div>
+
+        <div class="subsection-head">
+          <h3>Contradictions</h3>
+        </div>
+        <div id="contradictions-list" class="card-stack"></div>
+
+        <div class="subsection-head">
+          <h3>Research gaps</h3>
+        </div>
+        <ul id="gaps-list" class="plain-list"></ul>
+
+        <div class="subsection-head">
+          <h3>Design opportunities</h3>
+        </div>
+        <ul id="opportunities-list" class="plain-list"></ul>
+      </section>
+
+      <section id="ask-section" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Ask your research</h2>
+          <p class="panel-sub">Answered only from the connected board and the findings above, not general knowledge.</p>
+        </div>
+        <div id="ask-transcript" class="ask-transcript"></div>
+        <div class="ask-input-row">
+          <input type="text" id="ask-input" placeholder="What are the strongest patterns?" />
+          <button id="ask-btn" type="button" class="btn btn-secondary">Ask</button>
+        </div>
+        <p id="ask-error" class="error-banner" hidden></p>
+      </section>
+    </main>
+  </div>
+
+  <script src="figjam.js"></script>
+</body>
+</html>

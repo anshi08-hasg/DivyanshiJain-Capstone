@@ -78,10 +78,19 @@ class MockProvider(LLMProvider):
     """Offline stand-in used when no LLM API key is configured.
 
     Lets the frontend, backend wiring, and human-review flow be exercised
-    end to end with no external dependency or API key at all.
+    end to end with no external dependency or API key at all. Branches on a
+    marker in the system prompt so each caller (Pattern Analyzer, FigJam
+    agent's Pattern Finder / Research Critic / Q&A) gets canned data shaped
+    like its own schema, instead of silently returning empty results.
     """
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
+        if "Research Critic" in system_prompt:
+            return _MOCK_FIGJAM_CRITIC_RESPONSE
+        if "FigJam Research Agent answering" in system_prompt:
+            return _MOCK_FIGJAM_ASK_RESPONSE
+        if "FigJam board" in system_prompt:
+            return _MOCK_FIGJAM_ANALYZE_RESPONSE
         return _MOCK_RESPONSE
 
 
@@ -122,6 +131,47 @@ _MOCK_RESPONSE = """
     {"participant_id": "P1", "source_id": "P1-PP05", "category": "need", "text": "I wish there were more power outlets near the windows on the third floor.", "note": "not a cross-participant pattern"}
   ],
   "flags": []
+}
+"""
+
+
+_MOCK_FIGJAM_ANALYZE_RESPONSE = """
+{
+  "themes": [
+    {"id": "TH1", "name": "Noise during exam periods disrupts study space use", "evidence": ["N2", "N3", "N4"], "strength": "strong", "rationale": "Three separate participants describe the same crowding/noise pattern in different words. (inference)"},
+    {"id": "TH2", "name": "Accessible entrance is hard to find", "evidence": ["N7", "N8"], "strength": "medium", "rationale": null}
+  ],
+  "insights": [
+    {"id": "INS1", "statement": "Quiet-seating capacity is undersized for exam-period demand.", "evidence": ["N2", "N3", "N4"], "strength": "strong"},
+    {"id": "INS2", "statement": "Users strongly prefer personalized booking over walk-in access.", "evidence": ["N11"], "strength": "weak"}
+  ],
+  "contradictions": [
+    {"id": "CON1", "description": "P2 and P4 book group rooms in advance, but P3 explicitly avoids booking ahead.", "evidence": ["N11", "N12", "N13"]}
+  ],
+  "research_gaps": [
+    "No research item covers whether the accessible-entrance signage issue affects wheelchair users differently from ambulatory visitors."
+  ],
+  "design_opportunities": [
+    "Add temporary overflow quiet-study signage or seating during exam weeks.",
+    "Add directional signage for the accessible entrance visible from the parking lot."
+  ]
+}
+"""
+
+_MOCK_FIGJAM_CRITIC_RESPONSE = """
+{
+  "verdicts": [
+    {"insight_id": "INS1", "verdict": "validated", "note": "Three participants (P1, P3, P4) independently describe the same exam-week crowding/noise pattern with no contradicting item in the board."},
+    {"insight_id": "INS2", "verdict": "weak", "note": "Only one item (N11) supports this; N13 directly contradicts a strong booking preference. Treat as a hypothesis, not a validated insight."}
+  ]
+}
+"""
+
+_MOCK_FIGJAM_ASK_RESPONSE = """
+{
+  "answer": "The strongest recurring pattern is exam-period noise and crowding in the study space, reported independently by three participants (N2, N3, N4). A second, weaker pattern involves the accessible entrance being hard to find (N7, N8).",
+  "evidence": ["N2", "N3", "N4", "N7", "N8"],
+  "grounded": true
 }
 """
 
