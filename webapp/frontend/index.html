@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ResearchMate — Pattern Analyzer</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>ResearchMate — Pattern Analyzer</h1>
+    <p class="subtitle">Standalone Pattern Finder stage: paste per-participant research notes, find recurring cross-participant patterns, then review before finalizing.</p>
+  </header>
+
+  <main>
+    <section id="input-section">
+      <h2>1. Per-participant research material</h2>
+      <div id="participants"></div>
+      <button id="add-participant" type="button">+ Add participant</button>
+      <button id="run-analysis" type="button" class="primary">Run Pattern Analysis</button>
+      <p id="input-error" class="error" hidden></p>
+    </section>
+
+    <section id="results-section" hidden>
+      <h2>2. Candidate patterns — review before they count</h2>
+      <p class="hint">Approve, edit, or reject each item. Nothing here is final until you finalize below.</p>
+
+      <div id="patterns-list"></div>
+
+      <h3>Single-participant findings</h3>
+      <p class="hint">Held by only one participant — not a cross-participant pattern.</p>
+      <div id="findings-list"></div>
+
+      <div id="flags-box" hidden>
+        <h3>Flags</h3>
+        <ul id="flags-list"></ul>
+      </div>
+
+      <p class="hint">Only items marked <strong>Approve</strong> are included below — if you edited an item's label, click Approve afterward to carry the edit forward.</p>
+      <button id="finalize" type="button" class="primary">Finalize approved output</button>
+    </section>
+
+    <section id="report-section" hidden>
+      <h2>3. Final report</h2>
+      <pre id="report-output"></pre>
+      <button id="download-report" type="button">Download as .md</button>
+    </section>
+  </main>
+
+  <template id="participant-template">
+    <div class="participant-block">
+      <label>
+        Participant ID
+        <input type="text" class="participant-id" placeholder="e.g. P1" />
+      </label>
+      <label>
+        Research notes (paste per-participant analysis: pain points, needs, behaviours, motivations — with quote IDs)
+        <textarea class="participant-notes" rows="6" placeholder="P1-PP02 (pain point, cites P1-Q07): During finals I basically camp outside the silent room at 7am..."></textarea>
+      </label>
+      <button type="button" class="remove-participant">Remove</button>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+:root {
+  --border: #d8d8d8;
+  --bg-soft: #f7f7f8;
+  --accent: #2e7d32;
+  --warn: #c62828;
+  --text-dim: #555;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px 80px;
+  color: #1b1b1b;
+  line-height: 1.5;
+}
+
+header h1 { margin-bottom: 4px; }
+.subtitle, .hint { color: var(--text-dim); font-size: 0.95em; }
+
+section { margin-top: 32px; }
+
+.participant-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 12px;
+  background: var(--bg-soft);
+}
+
+.participant-block label {
+  display: block;
+  font-size: 0.85em;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.participant-id, .participant-notes {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  font-family: inherit;
+  font-size: 0.95em;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+  font-size: 0.9em;
+  margin-right: 8px;
+  margin-top: 8px;
+}
+
+button.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+button.remove-participant { border-color: var(--warn); color: var(--warn); }
+
+.error { color: var(--warn); font-weight: 600; }
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.card h4 { margin: 0 0 6px; }
+.card .meta { font-size: 0.85em; color: var(--text-dim); margin-bottom: 8px; }
+.card .evidence-item { font-size: 0.9em; margin: 2px 0 2px 12px; }
+.card .interpretation { font-style: italic; margin-top: 8px; }
+.card .contradiction { color: var(--warn); font-size: 0.9em; }
+
+.decision-row { margin-top: 10px; }
+.decision-row button.active { outline: 2px solid #1b1b1b; }
+
+.card.decision-approve { border-color: var(--accent); }
+.card.decision-reject { opacity: 0.5; }
+
+textarea.edit-field {
+  width: 100%;
+  margin-top: 8px;
+  font-family: inherit;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+#report-output {
+  white-space: pre-wrap;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
