@@ -1,0 +1,16 @@
+# Railway builds this with Nixpacks. The app is Python/Flask, but
+# figjam/figma_mcp_client.py spawns `npx` at runtime (for the "Push to
+# FigJam" feature), so Node.js has to be present in the image alongside
+# Python, not auto-detected on its own.
+#
+# Set this service's Root Directory to `webapp/backend` in Railway's project
+# settings so it finds this file, requirements.txt, and the Procfile here.
+
+[phases.setup]
+nixPkgs = ["python312", "nodejs_20"]
+
+[phases.install]
+cmds = ["python -m pip install --upgrade pip", "pip install -r requirements.txt"]
+
+[start]
+cmd = "waitress-serve --host=0.0.0.0 --port=$PORT app:app"

@@ -15,7 +15,7 @@ from pattern_analyzer import analyze_patterns
 from report import build_report
 from figjam.research_agent import FigJamAgentError, analyze_research, ask_question, connect_board
 from figjam.figma_layout import push_layout_to_figjam
-from figjam.figma_mcp_client import FigmaMCPError
+from figjam.figma_mcp_client import FigmaMCPError, request_pairing_code
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
@@ -147,6 +147,29 @@ def figjam_ask():
         return jsonify({"error": str(exc)}), 502
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Gemini failed to answer: {exc}"}), 502
+
+    return jsonify(result)
+
+
+@app.get("/api/figjam/mode")
+def figjam_mode():
+    """Lets the frontend know whether the Desktop Bridge plugin needs local
+    (automatic) or cloud (pairing code) connection, so it only shows the
+    Pair with FigJam step when it's actually relevant."""
+    return jsonify({"mode": os.environ.get("FIGJAM_MCP_MODE", "local").strip().lower()})
+
+
+@app.post("/api/figjam/pair")
+def figjam_pair():
+    """Cloud mode only: generates a one-time pairing code for the Desktop
+    Bridge plugin's Cloud Mode toggle. Not needed in local mode (the default),
+    where the plugin connects to localhost automatically."""
+    try:
+        result = asyncio.run(request_pairing_code())
+    except FigmaMCPError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"Could not generate a pairing code: {exc}"}), 502
 
     return jsonify(result)
 

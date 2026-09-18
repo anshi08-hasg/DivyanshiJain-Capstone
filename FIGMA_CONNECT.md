@@ -110,15 +110,19 @@ webapp/figma-plugin/            Desktop Bridge plugin (manifest.json, code.js,
                                  ui.html), vendored from figma-console-mcp
                                  1.40.0 so it can be imported straight from
                                  this repo (see section 7)
+webapp/backend/Procfile         Railway/Heroku-style process declaration
+webapp/backend/nixpacks.toml    tells Railway's builder to include Node.js
+                                 alongside Python (see section 8)
 ```
 
 Modified: `webapp/backend/app.py` (new routes below), `webapp/backend/llm_providers.py`
 (MockProvider now branches by system-prompt marker so FigJam gets its own
 canned demo response instead of the Pattern Analyzer's), `webapp/frontend/index.html`
 (one added nav link to `/figjam`, no other changes to the existing page),
-`webapp/backend/requirements.txt` and `webapp/.env.example` (added the `mcp`
-Python SDK and `FIGMA_ACCESS_TOKEN` for the Push to FigJam feature),
-`webapp/frontend/figjam.html` / `figjam.js` (added the Push to FigJam button).
+`webapp/backend/requirements.txt` and `webapp/.env.example` (added `mcp`,
+`httpx`, `waitress`, `FIGMA_ACCESS_TOKEN`, `FIGJAM_MCP_MODE` for the Push to
+FigJam feature and its two transport modes), `webapp/frontend/figjam.html` /
+`figjam.js` (added the Push to FigJam button and the Cloud Mode pairing UI).
 
 ## 5. New backend routes
 
@@ -133,10 +137,15 @@ Python SDK and `FIGMA_ACCESS_TOKEN` for the Push to FigJam feature),
 - `POST /api/figjam/ask` `{ "question": "..." }`: answers grounded only in the
   connected board and prior findings; marks `grounded: false` if it can't
   find support rather than guessing. Requires a prior `/connect` call.
+- `GET /api/figjam/mode`: returns `{"mode": "local"|"cloud"}` (from
+  `FIGJAM_MCP_MODE`), so the frontend only shows the pairing UI when relevant.
+- `POST /api/figjam/pair`: cloud mode only, generates a one-time pairing code
+  via `figma_pair_plugin` for the Desktop Bridge plugin's Cloud Mode toggle.
 - `POST /api/figjam/push-to-figjam`: pushes the current analysis to a real
   FigJam board as sections + sticky notes via Figma Console MCP (section 7).
   Requires a prior `/analyze` call (400 if not), and Figma Desktop + the
-  Desktop Bridge plugin running (502 with a clear message if not reachable).
+  Desktop Bridge plugin connected, local or paired via cloud (502 with a
+  clear message if not reachable).
 
 State is in-memory, single-session, matching the existing Pattern Analyzer
 page's approach (no database introduced for this MVP).
@@ -177,9 +186,12 @@ waitlist, so it isn't used here.)
 **The hard constraint that can't be worked around:** Figma Console MCP does
 not write to FigJam headlessly via just an API token. It relays tool calls to
 a "Desktop Bridge" plugin that must be running *live* inside the Figma
-Desktop app, with the target FigJam board open. There is no way to push
-content to a board while Figma Desktop is closed. This is a real limitation
-of Figma's plugin sandboxing model, not a shortcut taken in this build.
+Desktop app, with the target FigJam board open, *somewhere*. This is a real
+limitation of Figma's plugin sandboxing model, not a shortcut taken in this
+build. What changed after further work (section 7.1 below): that "somewhere"
+doesn't have to be the same machine as the backend server anymore, so this
+now works with the backend hosted remotely (Railway) as long as the plugin
+stays open on any machine, not necessarily Railway's own.
 
 ### What was built
 
@@ -271,7 +283,118 @@ tool's return value (whether it includes per-sticky node ids usable by
 `auto_arrange`) wasn't confirmed live. The manual grid math achieves the same
 visual result without depending on an unverified return shape.
 
-## 8. How to run it
+## 7.1 Cloud Mode (for hosting the backend remotely, e.g. Railway)
+
+Local Mode (above) spawns the MCP server as a local subprocess that opens a
+`ws://localhost:9223` server. The Desktop Bridge plugin connects to that
+localhost address, which only works when the plugin and the backend are on
+the *same machine*. Once the backend is hosted on Railway, "localhost" from
+the plugin's point of view is the plugin's own machine, never Railway's
+container, so Local Mode cannot work there at all.
+
+**Cloud Mode fixes this** by connecting over HTTPS to Figma Console MCP's own
+hosted relay instead of spawning anything locally. Set `FIGJAM_MCP_MODE=cloud`
+(env var, e.g. a Railway service variable) and the client
+(`figma_mcp_client.py`) switches from spawning `npx` to connecting to
+`https://figma-console-mcp.southleft.com/mcp` with `FIGMA_ACCESS_TOKEN` as a
+Bearer token. This is the community project's *own* relay service, a
+different thing from Figma's official remote MCP server (`mcp.figma.com`),
+which was tested and ruled out separately - see "What was verified" below.
+
+**Pairing, once, not repeatedly:** the plugin still needs to be told which
+cloud relay session to join, via a one-time 6-character code:
+
+1. `POST /api/figjam/pair` (or the **Generate pairing code** button, shown
+   automatically when `FIGJAM_MCP_MODE=cloud`) calls the `figma_pair_plugin`
+   tool and returns a code, valid for 5 minutes *to redeem*.
+2. In the same Desktop Bridge plugin already imported from
+   `webapp/figma-plugin/`, toggle **Cloud Mode** and enter the code.
+3. Once connected, pairing persists - confirmed live (see below), it is a
+   one-time setup, not a recurring 5-minute cycle. (An earlier version of
+   this document assumed otherwise, based on an AI-summarized reading of the
+   vendor's docs; that assumption was wrong and has been corrected here after
+   testing the real behavior directly.)
+
+**What was verified, live, for Cloud Mode specifically:**
+- Confirmed Figma's *official* remote MCP server cannot be used here at all:
+  a raw MCP `initialize` POST to `https://mcp.figma.com/mcp` returned `401`
+  with a standard OAuth challenge, and a Dynamic Client Registration attempt
+  against its own `https://api.figma.com/v1/oauth/mcp/register` endpoint
+  returned `403 Forbidden` - this is Figma's own infrastructure rejecting any
+  non-allowlisted client outright, not a bug in our code.
+- Connected directly to the community relay (`figma-console-mcp.southleft.com/mcp`)
+  with a plain Figma personal access token as Bearer auth - this succeeded
+  (95 tools listed), confirming this relay's own auth model is separate from
+  and more open than Figma's official server's.
+- Generated a real pairing code via `figma_pair_plugin`, paired the actual
+  Desktop Bridge plugin (Cloud Mode toggle) to it, and created a real section
+  on the user's live board through the cloud relay, immediately, with no
+  wait needed (unlike Local Mode's `wait_for_bridge` delay).
+- Waited ~90 seconds and wrote again with no re-pairing, no new code - the
+  same pairing was still live, confirming persistence rather than a 5-minute
+  connection cycle.
+- Ran a full push (5 sections, 8 stickies) through the actual
+  `POST /api/figjam/push-to-figjam` Flask route with `FIGJAM_MCP_MODE=cloud`
+  set - succeeded end to end, with no `localhost` involved anywhere.
+- Found and fixed a real bug during this: `figma_get_status` (used by
+  `wait_for_bridge` to poll for a Local Mode reconnect) is not a registered
+  tool on the cloud relay at all (95 tools there vs 121 on the local server),
+  so calling it there just failed outright. Fixed by making
+  `wait_for_bridge()` a no-op in cloud mode - the persistent relay doesn't
+  need a reconnect-delay workaround the way a freshly-spawned local process
+  does.
+- Also observed the pairing disconnect once during testing (most likely from
+  repeatedly toggling the plugin between Local and Cloud mode during this
+  same session) - the system correctly returned a clear "No plugin connected
+  to cloud relay" error rather than hanging or failing silently, and
+  re-pairing with a freshly generated code is all that's needed to recover.
+
+## 8. Deploying to Railway
+
+**Not deployed or tested against real Railway infrastructure in this
+session** - no Railway CLI or account access was available here. Everything
+below was prepared and verified as far as possible without that (Procfile
+command tested locally with `waitress-serve`; the Cloud Mode MCP path tested
+live per section 7.1), but the actual "create a Railway project, connect
+this repo, deploy" steps need to happen on your end.
+
+### Files added for deployment
+- `webapp/backend/Procfile`: `web: waitress-serve --host=0.0.0.0 --port=$PORT app:app`.
+  Uses `waitress` instead of `gunicorn` specifically so it could be tested on
+  this Windows dev machine too (`gunicorn` needs `fcntl`, Unix-only);
+  `waitress` runs identically on both and is a legitimate production WSGI
+  server, not a dev-only choice.
+- `webapp/backend/nixpacks.toml`: tells Railway's Nixpacks builder to include
+  Node.js alongside Python, since `figma_mcp_client.py`'s Local Mode spawns
+  `npx`. Without this, Nixpacks would likely auto-detect only Python and
+  Local Mode would fail on Railway with "npx not found" (Cloud Mode wouldn't
+  need Node.js at all, but Local Mode is still the default unless
+  `FIGJAM_MCP_MODE=cloud` is set).
+
+### Setup steps (to do in Railway's dashboard)
+1. Create a new Railway project, connect this GitHub repo.
+2. In the service's Settings, set **Root Directory** to `webapp/backend` -
+   this is a monorepo with unrelated files at the repo root (`.claude/`,
+   other branches' work), so Railway needs to know where the actual app
+   lives to find `Procfile`, `nixpacks.toml`, and `requirements.txt`.
+3. Set these environment variables under the service's Variables tab (do
+   NOT commit a `.env` file with real secrets - `.env` is already gitignored):
+   - `LLM_PROVIDER` (`gemini`/`anthropic`/`openai`/`mock`) and whichever
+     matching `*_API_KEY` / `*_MODEL` it needs.
+   - `FIGMA_ACCESS_TOKEN` and `FIGJAM_MCP_MODE=cloud` if you want Push to
+     FigJam to work on the deployed version (see section 7.1 - Local Mode,
+     the default, cannot work once the backend isn't on your machine).
+4. Deploy. Railway sets `$PORT` automatically; the Procfile already uses it.
+
+### What this means for "Push to FigJam" once deployed
+With `FIGJAM_MCP_MODE=cloud` set, the deployed app's **Generate pairing
+code** button (shown automatically in that mode) lets you pair your own,
+locally-running Figma Desktop + plugin to the relay once. After that,
+clicking **Push to FigJam** on the *publicly hosted* site writes to your
+board through the cloud relay, with nothing related to FigJam running on
+Railway itself except the outbound HTTPS calls in `figma_mcp_client.py`.
+
+## 9. How to run it
 
 ```bash
 cd webapp/backend
@@ -291,7 +414,7 @@ To also use **Push to FigJam** (section 7): install Node.js, set
 `FIGMA_ACCESS_TOKEN` in `.env`, and have Figma Desktop open with the target
 board and the Desktop Bridge plugin running before clicking the button.
 
-## 9. What was tested
+## 10. What was tested
 
 - `python webapp/backend/test_figjam.py`: 7 checks, all passing. Covers
   normalization of a typical board, an unsupported FigJam node type falling
@@ -314,7 +437,7 @@ board and the Desktop Bridge plugin running before clicking the button.
   the write-path-specific tests (live MCP handshake, real tool list, full
   HTTP route, and the honest limitation on what couldn't be verified here).
 
-## 10. What currently works
+## 11. What currently works
 
 - Retrieve (demo data) -> normalize -> analyze -> critique -> evidence
   verification -> structured frontend display -> grounded Q&A, end to end.
@@ -327,7 +450,7 @@ board and the Desktop Bridge plugin running before clicking the button.
 - Approve / Edit / Challenge / Reject controls on insights (frontend-only
   state, per the task's guidance that this can stay local for now).
 
-## 11. What does not work / limitations
+## 12. What does not work / limitations
 
 - **No real FigJam board can be connected.** Every "Connect FigJam" click
   loads the same fixed demo board. This is the single biggest gap and is
@@ -350,12 +473,26 @@ board and the Desktop Bridge plugin running before clicking the button.
   environment~~ **Resolved:** verified live with the user driving the Figma
   Desktop/plugin side (section 7). A real push (5 sections, 8 stickies)
   succeeded through the actual deployed Flask route on a real FigJam board.
-- **Every push still takes ~5-30 seconds** even when everything is already
-  running, because `wait_for_bridge()` has to wait for the plugin to
-  reconnect to the freshly-spawned server before any write can succeed (see
-  section 7). This is inherent to how the community server works (a new
+- **Local Mode pushes still take ~5-30 seconds** even when everything is
+  already running, because `wait_for_bridge()` has to wait for the plugin to
+  reconnect to the freshly-spawned local server before any write can succeed
+  (see section 7). This is inherent to how the local server works (a new
   process per session, not a long-lived daemon), not something fixable in
-  our own code without changing that server's architecture.
+  our own code without changing that server's architecture. **Cloud Mode
+  (section 7.1) does not have this delay** - confirmed live, writes succeed
+  immediately, since the relay is already persistently connected from
+  pairing rather than freshly spawned per push.
+- **Cloud Mode's pairing was observed to disconnect once** during this
+  session's testing (most likely from switching the plugin between Local and
+  Cloud mode repeatedly while testing both). Re-pairing via a fresh code
+  (the **Generate pairing code** button) resolves it; there is no way to
+  detect a stale pairing in advance short of attempting a write and getting
+  the clear "No plugin connected to cloud relay" error back.
+- **Railway deployment itself is untested** (no Railway account/CLI access
+  in this build environment). The `Procfile` command was verified locally
+  with `waitress-serve`, and Cloud Mode's HTTPS-only transport was verified
+  live end-to-end, but the actual Nixpacks build and Railway runtime have not
+  been exercised. See section 8.
 - **Auto-arrange isn't used**, so sticky layout inside each section is fixed
   grid math rather than Figma's own layout tool; see the "Known
   simplification" note in section 7.
@@ -365,7 +502,7 @@ board and the Desktop Bridge plugin running before clicking the button.
   querying the running server directly and finding `figjam_create_section` in
   its live tool list, which the layout code now uses.
 
-## 12. Future improvements
+## 13. Future improvements
 
 - Implement `MCPFigJamAdapter.fetch_board()` for real once a Figma/FigJam MCP
   tool is authorized and its schema is known, mapping its node output into

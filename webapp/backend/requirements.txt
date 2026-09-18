@@ -1,5 +1,6 @@
 flask>=3.0
 python-dotenv>=1.0
+waitress>=3.0
 
 # Only needed for the provider you actually set LLM_PROVIDER to.
 # Safe to leave both installed; neither is imported unless selected.
@@ -8,5 +9,9 @@ openai>=1.50
 google-generativeai>=0.8
 
 # Needed only for the "Push to FigJam" feature (figjam/figma_mcp_client.py).
-# Also requires Node.js/npx installed separately (spawns figma-console-mcp).
+# Local mode also requires Node.js/npx installed separately (spawns
+# figma-console-mcp). Cloud mode (FIGJAM_MCP_MODE=cloud) needs no Node.js,
+# just httpx for the HTTPS relay connection - used explicitly here even
+# though mcp already depends on it, so the dependency isn't implicit.
 mcp>=1.0
+httpx>=0.27

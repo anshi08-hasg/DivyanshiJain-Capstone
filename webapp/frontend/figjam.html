@@ -99,12 +99,27 @@
         </div>
         <ul id="opportunities-list" class="plain-list"></ul>
 
+        <div id="pair-figjam-box" class="finalize-bar" hidden>
+          <p class="panel-sub">
+            This deployment connects to FigJam via the cloud relay (no local Figma Desktop
+            needed on this server). Pair your own Figma Desktop once: generate a code below,
+            then enter it in the Desktop Bridge plugin's Cloud Mode toggle. Pairing persists,
+            you shouldn't need to repeat this unless the plugin disconnects.
+          </p>
+          <button id="pair-figjam-btn" type="button" class="btn btn-ghost">
+            <span class="btn-label">Generate pairing code</span>
+            <span class="spinner" hidden></span>
+          </button>
+          <p id="pair-figjam-result" class="panel-sub" hidden></p>
+          <p id="pair-figjam-error" class="error-banner" hidden></p>
+        </div>
+
         <div class="finalize-bar">
           <p class="panel-sub">
             Sends this output to FigJam as real sections and sticky notes, one section per
             group (Themes, Insights, Contradictions, Research Gaps, Design Opportunities).
             Requires Figma Desktop open with the target board and the Desktop Bridge plugin
-            running (Plugins &gt; Development &gt; Figma Desktop Bridge). See FIGMA_CONNECT.md.
+            connected. See FIGMA_CONNECT.md.
           </p>
           <button id="push-figjam-btn" type="button" class="btn btn-secondary">
             <span class="btn-label">Push to FigJam</span>

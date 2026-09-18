@@ -246,6 +246,36 @@ askInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") askBtn.click();
 });
 
+const pairFigjamBox = document.getElementById("pair-figjam-box");
+const pairFigjamBtn = document.getElementById("pair-figjam-btn");
+const pairFigjamResult = document.getElementById("pair-figjam-result");
+const pairFigjamError = document.getElementById("pair-figjam-error");
+
+fetch("/api/figjam/mode")
+  .then((res) => res.json())
+  .then((data) => { pairFigjamBox.hidden = data.mode !== "cloud"; })
+  .catch(() => {});
+
+pairFigjamBtn.addEventListener("click", async () => {
+  pairFigjamError.hidden = true;
+  pairFigjamResult.hidden = true;
+  setBusy(pairFigjamBtn, true, "Generate pairing code");
+
+  try {
+    const res = await fetch("/api/figjam/pair", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Could not generate a pairing code.");
+
+    pairFigjamResult.innerHTML = `<strong>Code: ${escapeHtml(data.pairingCode)}</strong> (expires in ${escapeHtml(data.expiresIn)})<br>${data.instructions.map(escapeHtml).join("<br>")}`;
+    pairFigjamResult.hidden = false;
+  } catch (err) {
+    pairFigjamError.textContent = err.message;
+    pairFigjamError.hidden = false;
+  } finally {
+    setBusy(pairFigjamBtn, false, "Generate pairing code");
+  }
+});
+
 const pushFigjamBtn = document.getElementById("push-figjam-btn");
 const pushFigjamError = document.getElementById("push-figjam-error");
 const pushFigjamSuccess = document.getElementById("push-figjam-success");

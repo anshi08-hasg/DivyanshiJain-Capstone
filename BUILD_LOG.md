@@ -231,3 +231,90 @@ plugin pairing in via a 6-character code) was researched and explained to
 the user as the closest available path for a Railway deployment, but not
 implemented or tested this session; only Local Mode (everything on one
 machine) was verified live.
+
+## figmaconnecttry branch — Cloud Mode + Railway deployment prep
+
+**Date:** 18 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Added Cloud Mode support to `figma_mcp_client.py`: a `FIGJAM_MCP_MODE`
+  env var (`local` default, `cloud`) switches the transport between spawning
+  a local `npx` process and connecting over HTTPS to Figma Console MCP's
+  hosted relay (`figma-console-mcp.southleft.com/mcp`) using
+  `FIGMA_ACCESS_TOKEN` as Bearer auth. Local Mode cannot work once the
+  backend is hosted remotely (the plugin can only reach its own machine's
+  `localhost`), so Cloud Mode is what makes a Railway deployment viable at
+  all for this feature.
+- Added `request_pairing_code()` and `POST /api/figjam/pair` (calls the
+  relay's `figma_pair_plugin` tool), `GET /api/figjam/mode`, and a
+  **Generate pairing code** button in the frontend, shown automatically only
+  when `FIGJAM_MCP_MODE=cloud`.
+- Fixed `wait_for_bridge()` to no-op in cloud mode: `figma_get_status` (used
+  to poll for a Local Mode reconnect) isn't even a registered tool on the
+  cloud relay (95 tools there vs 121 locally), so calling it there failed
+  outright; the cloud relay doesn't need the reconnect-delay workaround
+  anyway, since pairing establishes a persistent connection, not a
+  freshly-spawned one per push.
+- Added Railway deployment plumbing: `webapp/backend/Procfile`
+  (`waitress-serve`, chosen over `gunicorn` specifically so the exact command
+  could be tested on this Windows dev machine too) and
+  `webapp/backend/nixpacks.toml` (adds Node.js to the build image alongside
+  Python, needed for Local Mode's `npx` spawn).
+
+### What broke / what changed
+- User pushed back on an earlier claim that Cloud Mode requires re-pairing
+  every ~5 minutes. Re-investigated rather than accepting the original
+  (AI-summarized) doc reading: confirmed the 5-minute window applies only to
+  redeeming the *code itself* (like an OTP), not to the established
+  connection. Verified live: a write succeeded immediately after pairing,
+  and a second write succeeded again ~90 seconds later with zero re-pairing,
+  confirming pairing is a one-time setup per plugin session.
+- Investigated using Figma's *official* remote MCP server directly (to avoid
+  the plugin entirely, per an explicit user request) before building Cloud
+  Mode. Ruled out empirically, not just from docs: a raw MCP `initialize`
+  POST to `mcp.figma.com` returned `401` with a standard OAuth challenge, and
+  a Dynamic Client Registration attempt against its own registration
+  endpoint returned `403 Forbidden` - Figma's own infrastructure rejects any
+  non-allowlisted client outright. This ruled out the plugin-free approach
+  entirely, for this project or anyone else, and justified building on the
+  community relay instead.
+- `figma_get_status` failing on the cloud relay (see above) initially
+  produced the exact same generic "Timed out... last status: not connected
+  yet" error as the earlier Local Mode timing bug, which looked identical
+  and could have been mistaken for a recurrence of it; root-caused instead
+  by directly calling `figma_get_status` on the cloud transport and getting
+  `MCP error -32602: Tool figma_get_status not found` back, which is a
+  different failure than a timing/reconnect issue and needed a different fix.
+
+### Test evidence
+- **Live end-to-end via Cloud Mode, through the actual Flask route:**
+  `POST /api/figjam/push-to-figjam` with `FIGJAM_MCP_MODE=cloud` created all
+  5 sections and 8 sticky notes on the real board, immediately, no wait -
+  compare to Local Mode's 5-30s `wait_for_bridge` delay for the same push.
+- **Persistence test:** wrote a real section via the cloud relay, waited
+  ~90 seconds doing nothing, wrote again with the same pairing (no new code)
+  - succeeded both times.
+- **Ruled out Figma's official remote MCP empirically:** `401` on a raw
+  `initialize` call to `mcp.figma.com`; `403 Forbidden` on Dynamic Client
+  Registration against `api.figma.com/v1/oauth/mcp/register`.
+- **Confirmed the community relay's own auth is separate and more open:**
+  connecting to `figma-console-mcp.southleft.com/mcp` with a plain Figma
+  personal access token as Bearer auth succeeded (95 tools listed), whereas
+  the official server rejects unlisted clients regardless of token type.
+- **Confirmed the pairing UI end-to-end:** `POST /api/figjam/pair` returned a
+  real pairing code and instructions; entering it in the plugin's Cloud Mode
+  toggle connected successfully; `GET /api/figjam/mode` correctly reports
+  `cloud`, and the frontend correctly shows the pairing button only in that
+  mode.
+- Deliberately observed a disconnect during testing (from switching the
+  plugin between Local/Cloud repeatedly) and confirmed the system surfaces a
+  clear "No plugin connected to cloud relay" error rather than hanging.
+- `python webapp/backend/test_figjam.py`: all 9 checks still passing.
+- **Not tested:** the Procfile/nixpacks.toml combination on actual Railway
+  infrastructure (no Railway CLI/account access in this environment). Only
+  the exact Procfile command (`waitress-serve --host=0.0.0.0 --port=$PORT
+  app:app`) was verified locally, and only the HTTPS/Cloud Mode transport
+  (which is what Railway would actually need) was verified live - not the
+  Railway build/deploy process itself.
