@@ -35,7 +35,7 @@ nothing else to start.
 
 ## Flow
 
-1. Paste per-participant research notes (pain points, needs, behaviours,
+1. Paste each participant's research notes (pain points, needs, behaviours,
    motivations, ideally with quote IDs) for 2+ participants and run analysis.
 2. Review each candidate pattern and single-participant finding: approve,
    edit, or reject. Nothing is final until you finalize.
