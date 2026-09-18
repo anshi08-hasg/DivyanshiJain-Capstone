@@ -19,7 +19,7 @@ from figjam.figma_mcp_client import FigmaMCPError, request_pairing_code
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
-app = Flask(__name__, static_folder="../frontend", static_url_path="")
+app = Flask(__name__, static_folder="frontend", static_url_path="")
 
 # In-memory, single-session state for the experimental FigJam agent (same
 # pattern as the Pattern Analyzer's module-level state: no DB for this MVP).

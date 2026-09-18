@@ -101,11 +101,11 @@ webapp/backend/figjam/
   figma_layout.py        deterministic analysis-output -> FigJam layout plan,
                         push_layout_to_figjam()
 webapp/backend/test_figjam.py   standalone checks, run with `python test_figjam.py`
-webapp/frontend/figjam.html     Connect FigJam / Agent Activity / Overview /
+webapp/backend/frontend/figjam.html     Connect FigJam / Agent Activity / Overview /
                                  Results / Ask your research page
-webapp/frontend/figjam.css      page-specific styles (verdict badges, activity
+webapp/backend/frontend/figjam.css      page-specific styles (verdict badges, activity
                                  checklist, ask transcript)
-webapp/frontend/figjam.js       wires the above to the API endpoints below
+webapp/backend/frontend/figjam.js       wires the above to the API endpoints below
 webapp/figma-plugin/            Desktop Bridge plugin (manifest.json, code.js,
                                  ui.html), vendored from figma-console-mcp
                                  1.40.0 so it can be imported straight from
@@ -117,11 +117,11 @@ webapp/backend/nixpacks.toml    tells Railway's builder to include Node.js
 
 Modified: `webapp/backend/app.py` (new routes below), `webapp/backend/llm_providers.py`
 (MockProvider now branches by system-prompt marker so FigJam gets its own
-canned demo response instead of the Pattern Analyzer's), `webapp/frontend/index.html`
+canned demo response instead of the Pattern Analyzer's), `webapp/backend/frontend/index.html`
 (one added nav link to `/figjam`, no other changes to the existing page),
 `webapp/backend/requirements.txt` and `webapp/.env.example` (added `mcp`,
 `httpx`, `waitress`, `FIGMA_ACCESS_TOKEN`, `FIGJAM_MCP_MODE` for the Push to
-FigJam feature and its two transport modes), `webapp/frontend/figjam.html` /
+FigJam feature and its two transport modes), `webapp/backend/frontend/figjam.html` /
 `figjam.js` (added the Push to FigJam button and the Cloud Mode pairing UI).
 
 ## 5. New backend routes
@@ -393,6 +393,51 @@ locally-running Figma Desktop + plugin to the relay once. After that,
 clicking **Push to FigJam** on the *publicly hosted* site writes to your
 board through the cloud relay, with nothing related to FigJam running on
 Railway itself except the outbound HTTPS calls in `figma_mcp_client.py`.
+
+### Real deployment issues hit and fixed (from actual Railway logs)
+
+Once the user actually deployed, three real problems surfaced that couldn't
+have been caught without a live attempt:
+
+1. **Build failed entirely at first** - Railway's builder ("Railpack", not
+   Nixpacks) reported it could only see `BUILD_LOG.md` and
+   `DivyanshiJain_capstone_plan.md` at the app root. Root cause: **Root
+   Directory** wasn't set yet, so Railway was building from the repo root
+   instead of `webapp/backend`, and couldn't detect any language/build setup
+   at all in the two markdown files sitting there. Fixed by actually setting
+   Root Directory in Railway's UI (this doc already said to; it just hadn't
+   been done yet at that point).
+2. **Deployed but unreachable ("Application failed to respond")** - deploy
+   logs showed Flask's own dev server running (`* Running on
+   http://127.0.0.1:5000`, `Debug mode: on`), meaning Railpack ran `python
+   app.py` directly and ignored the `Procfile` entirely (Railpack may not
+   read Heroku-style Procfiles at all - unconfirmed, but the behavior matches
+   that). `127.0.0.1` isn't reachable from outside the container, and debug
+   mode on a public deployment exposes the Werkzeug debugger PIN. Fixed two
+   ways: (a) `app.py`'s `if __name__ == "__main__"` block now binds
+   `0.0.0.0`, reads `$PORT`, and only enables debug via an explicit
+   `FLASK_DEBUG` env var, so even a direct `python app.py` run is safe and
+   reachable; (b) recommended setting Railway's **Start Command** override
+   explicitly to `waitress-serve --host=0.0.0.0 --port=$PORT app:app` so a
+   real production WSGI server runs instead of Flask's dev server, since (a)
+   is a safety net, not the intended production path.
+3. **Backend responded but the frontend served nothing** - root cause: with
+   Root Directory set to `webapp/backend`, Railway's build context is scoped
+   to that directory, and `webapp/frontend/` was a *sibling* directory
+   outside it, so it likely wasn't included in the deployed image at all,
+   even though `app.py`'s `static_folder="../frontend"` pointed at it
+   (worked locally, where the sibling directory obviously exists on disk).
+   Fixed by moving `webapp/frontend/` to `webapp/backend/frontend/` (`git mv`,
+   preserving history) and changing `static_folder` to `"frontend"`, so the
+   whole app is self-contained under the directory Railway actually deploys.
+   Verified locally after the move: all routes and static assets (`/`,
+   `/app.js`, `/style.css`, `/figjam`, `/figjam.js`, `/api/provider`) still
+   return `200`.
+
+`webapp/figma-plugin/` was deliberately left as a sibling directory (not
+moved) - it's only ever used for a one-time manual import into Figma
+Desktop, never served or read by the Flask app at runtime, so it doesn't
+need to be inside the Railway-deployed directory.
 
 ## 9. How to run it
 
