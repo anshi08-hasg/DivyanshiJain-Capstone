@@ -5,6 +5,7 @@ Review flow (researchmate-agent.md) as two HTTP endpoints, so the pipeline
 stage can run as a normal web app instead of through Claude Code.
 """
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
@@ -13,6 +14,8 @@ from flask import Flask, jsonify, request
 from pattern_analyzer import analyze_patterns
 from report import build_report
 from figjam.research_agent import FigJamAgentError, analyze_research, ask_question, connect_board
+from figjam.figma_layout import push_layout_to_figjam
+from figjam.figma_mcp_client import FigmaMCPError
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
@@ -144,6 +147,26 @@ def figjam_ask():
         return jsonify({"error": str(exc)}), 502
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Gemini failed to answer: {exc}"}), 502
+
+    return jsonify(result)
+
+
+@app.post("/api/figjam/push-to-figjam")
+def figjam_push():
+    analysis = _figjam_state.get("analysis")
+    if analysis is None:
+        return jsonify({"error": "Run analysis before pushing to FigJam."}), 400
+
+    try:
+        result = asyncio.run(push_layout_to_figjam(analysis))
+    except FigmaMCPError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001 - surface any unexpected MCP/subprocess error to the UI
+        return jsonify({"error": f"Push to FigJam failed: {exc}"}), 502
+
+    _figjam_state["activity"] = _figjam_state["activity"] + [{"label": a, "at": ""} for a in result["activity"]]
 
     return jsonify(result)
 

@@ -1,12 +1,13 @@
 """Lightweight checks for the FigJam Research Agent (no pytest dependency,
 run directly: `python test_figjam.py`), covering the cases called out in the
 task spec: normalization, empty research, malformed responses, evidence
-mapping, and adapter/agent failure handling.
+mapping, adapter/agent failure handling, and FigJam layout-plan building.
 """
 
 from figjam.adapter import DemoFigJamAdapter, MCPFigJamAdapter, FigJamUnavailableError
 from figjam.normalize import normalize_board
 from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidence, connect_board
+from figjam.figma_layout import build_layout_plan
 
 
 def test_normalize_typical_board():
@@ -92,6 +93,28 @@ def test_evidence_verification_drops_invented_ids():
     verified2, unsupported2 = _verify_evidence(context, ["N99-invented"])
     assert verified2 == []
     assert unsupported2 is True
+
+
+def test_layout_plan_skips_empty_sections_and_uses_valid_sticky_colors():
+    analysis = {
+        "themes": [{"id": "TH1", "name": "Noise", "evidence": ["N1", "N2"]}],
+        "insights": [],
+        "contradictions": [{"id": "CON1", "description": "P1 vs P2", "evidence": ["N1"]}],
+        "research_gaps": [],
+        "design_opportunities": [],
+    }
+    plan = build_layout_plan(analysis)
+    keys = [s["key"] for s in plan]
+    assert keys == ["themes", "contradictions"], "empty sections (insights, gaps, opportunities) must be skipped"
+
+    valid_colors = {"YELLOW", "BLUE", "GREEN", "PINK", "ORANGE", "PURPLE", "RED", "LIGHT_GRAY", "GRAY"}
+    for section in plan:
+        assert section["sticky_color"] in valid_colors, "must use the real figjam_create_stickies color enum, not arbitrary hex"
+        assert section["width"] > 0 and section["height"] > 0
+
+
+def test_layout_plan_empty_analysis_produces_no_sections():
+    assert build_layout_plan({}) == []
 
 
 def _run_all():

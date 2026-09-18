@@ -245,3 +245,32 @@ askBtn.addEventListener("click", async () => {
 askInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") askBtn.click();
 });
+
+const pushFigjamBtn = document.getElementById("push-figjam-btn");
+const pushFigjamError = document.getElementById("push-figjam-error");
+const pushFigjamSuccess = document.getElementById("push-figjam-success");
+
+pushFigjamBtn.addEventListener("click", async () => {
+  pushFigjamError.hidden = true;
+  pushFigjamSuccess.hidden = true;
+  setBusy(pushFigjamBtn, true, "Push to FigJam");
+
+  try {
+    const res = await fetch("/api/figjam/push-to-figjam", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Could not push to FigJam.");
+
+    pushFigjamSuccess.textContent = `Created ${data.stickies_created} sticky note(s) across ${data.sections.length} section(s): ${data.sections.join(", ")}.`;
+    pushFigjamSuccess.hidden = false;
+    data.activity.forEach((label) => {
+      const li = document.createElement("li");
+      li.innerHTML = `${escapeHtml(label)}<span class="activity-time"></span>`;
+      activityList.appendChild(li);
+    });
+  } catch (err) {
+    pushFigjamError.textContent = err.message;
+    pushFigjamError.hidden = false;
+  } finally {
+    setBusy(pushFigjamBtn, false, "Push to FigJam");
+  }
+});

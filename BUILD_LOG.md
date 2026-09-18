@@ -83,3 +83,80 @@ Restarted the Flask server and re-verified via PowerShell against `http://127.0.
 
 Not tested: the visual redesign itself (layout, colors, step indicator, badges, hover states) was not exercised in an actual browser, only the underlying HTML/CSS/JS files and the API contract they depend on were verified directly.
 
+## figmaconnecttry branch — Push to FigJam (write integration)
+
+**Date:** 18 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Added a real write path from the FigJam Research Agent to an actual FigJam
+  board, on top of the existing (demo-data-only) read path from the earlier
+  FigJam agent build:
+  - `webapp/backend/figjam/figma_mcp_client.py`: a genuine MCP stdio client
+    (using the official `mcp` Python SDK) that spawns `npx -y
+    figma-console-mcp@latest` and calls its real tools: `figjam_create_section`,
+    `figjam_create_stickies`, `figjam_auto_arrange`, plus `list_tools()` as a
+    connectivity check.
+  - `webapp/backend/figjam/figma_layout.py`: deterministic (non-LLM) logic
+    that maps the agent's analysis output (themes/insights/contradictions/
+    research gaps/design opportunities) into one real FigJam section per
+    group, each containing a grid of colored sticky notes.
+  - `POST /api/figjam/push-to-figjam` in `app.py`, and a **Push to FigJam**
+    button on the results page.
+  - Installed Node.js (`winget install OpenJS.NodeJS.LTS`) and the `mcp`
+    Python SDK, since the community MCP server is an npm package spawned as
+    a subprocess.
+  - Updated `webapp/.env.example` and `requirements.txt` for `FIGMA_ACCESS_TOKEN`
+    and the `mcp` dependency.
+  - Expanded `FIGMA_CONNECT.md` (new section 7) and `test_figjam.py` (2 new
+    tests) to cover this feature honestly.
+
+### What broke / what changed
+- Initially assumed (based on Figma's own help docs and a third-party docs
+  site) that no write-capable Figma/FigJam MCP existed at all, and separately
+  that no FigJam "section" tool existed. Both assumptions were wrong:
+  - A real write path exists via the community "Figma Console MCP" project,
+    confirmed via web search and doc fetches.
+  - `figjam_create_section` does exist. It's simply undocumented on the pages
+    fetched during initial research. The exact schema (`name`, `x`, `y`,
+    `width`, `height`, `fillColor`) was pulled directly from the live running
+    server's tool list, not trusted from any written doc, once code correctly
+    used it in place of the earlier planned workaround (a plain shape with
+    text standing in for a section).
+  - Third-party docs also stated sticky `color` accepts arbitrary hex codes;
+    the live server's schema showed it's actually a fixed enum (`YELLOW`,
+    `BLUE`, `GREEN`, `PINK`, `ORANGE`, `PURPLE`, `RED`, `LIGHT_GRAY`, `GRAY`).
+    Code was corrected to use the enum before any real tool call was attempted.
+  - Figma's *official* remote MCP server was investigated first and ruled
+    out: it only allowlists specific IDE clients (Claude Code, Cursor, VS
+    Code), and connecting a custom backend requires joining a developer
+    waitlist, so it isn't a usable path for this feature.
+- This build environment had neither Node.js nor the `mcp` Python SDK
+  installed; both were added before any of this code could even import.
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 9 checks, all passing (7 prior +
+  2 new: layout-plan section skipping/color-enum correctness, and empty
+  analysis producing no sections).
+- **Live, real MCP handshake test** (not mocked): the client successfully
+  spawned `figma-console-mcp`, completed the MCP `initialize` handshake, and
+  listed all 121 real tools the server registers, confirming
+  `figjam_create_section` and `figjam_create_stickies` genuinely exist and
+  pulling their exact JSON schemas directly from the live server.
+- **Live write-attempt test**: called `create_section(...)` against the
+  running server with no Figma Desktop/Bridge connected -> failed with a
+  clear, specific error (not a crash or a hang), proving the failure path
+  behaves correctly when the required live bridge isn't present.
+- **Full HTTP route test**: started the Flask app, connected + analyzed via
+  the mock provider to populate state, then called `POST
+  /api/figjam/push-to-figjam` -> got the same clear 502 error end-to-end
+  through the actual route (not just the underlying function), confirming
+  the whole wiring (Flask -> asyncio -> layout builder -> MCP client ->
+  subprocess -> real tool call) works correctly up to the point where a live
+  Figma Desktop Bridge is genuinely required.
+- **Not tested and cannot be tested from this environment:** an actual
+  section or sticky note appearing on a real FigJam board. This build has no
+  GUI and cannot run Figma Desktop or its plugin menu; that final visual
+  confirmation has to happen on the user's own machine, documented step by
+  step in `FIGMA_CONNECT.md` section 7.

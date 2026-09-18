@@ -98,6 +98,21 @@
           <h3>Design opportunities</h3>
         </div>
         <ul id="opportunities-list" class="plain-list"></ul>
+
+        <div class="finalize-bar">
+          <p class="panel-sub">
+            Sends this output to FigJam as real sections and sticky notes, one section per
+            group (Themes, Insights, Contradictions, Research Gaps, Design Opportunities).
+            Requires Figma Desktop open with the target board and the Desktop Bridge plugin
+            running (Plugins &gt; Development &gt; Figma Desktop Bridge). See FIGMA_CONNECT.md.
+          </p>
+          <button id="push-figjam-btn" type="button" class="btn btn-secondary">
+            <span class="btn-label">Push to FigJam</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </div>
+        <p id="push-figjam-error" class="error-banner" hidden></p>
+        <p id="push-figjam-success" class="panel-sub" hidden></p>
       </section>
 
       <section id="ask-section" class="panel" hidden>

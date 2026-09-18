@@ -59,7 +59,7 @@ data, not the AI reasoning on top of it.
 
 ```mermaid
 flowchart LR
-    A[FigJam Board] -->|not available yet| B[Figma MCP]
+    A[FigJam Board] -->|read: not available yet| B[Figma MCP]
     A2[Demo board: fixed sample data] --> C[Research Data Layer]
     B -.->|planned, not implemented| C
     C --> D[Research Agent]
@@ -68,6 +68,9 @@ flowchart LR
     F --> G[Structured Insights + Evidence Check]
     G --> H[Frontend]
     H -->|Ask your research| D
+    H -->|Push to FigJam| I[Figma Layout Builder]
+    I --> J[Figma Console MCP client]
+    J -->|requires live Desktop Bridge plugin| K[Your FigJam Board]
 ```
 
 Code = deterministic data operations: retrieving raw items, normalizing them
@@ -92,6 +95,10 @@ webapp/backend/figjam/
   normalize.py          raw board -> FigJamResearchContext (deterministic)
   research_agent.py     connect_board(), analyze_research(), ask_question()
                         (Gemini calls + evidence verification + activity log)
+  figma_mcp_client.py    real MCP client for Figma Console MCP (write path):
+                        create_section(), create_stickies(), list_tools()
+  figma_layout.py        deterministic analysis-output -> FigJam layout plan,
+                        push_layout_to_figjam()
 webapp/backend/test_figjam.py   standalone checks, run with `python test_figjam.py`
 webapp/frontend/figjam.html     Connect FigJam / Agent Activity / Overview /
                                  Results / Ask your research page
@@ -103,7 +110,10 @@ webapp/frontend/figjam.js       wires the above to the API endpoints below
 Modified: `webapp/backend/app.py` (new routes below), `webapp/backend/llm_providers.py`
 (MockProvider now branches by system-prompt marker so FigJam gets its own
 canned demo response instead of the Pattern Analyzer's), `webapp/frontend/index.html`
-(one added nav link to `/figjam`, no other changes to the existing page).
+(one added nav link to `/figjam`, no other changes to the existing page),
+`webapp/backend/requirements.txt` and `webapp/.env.example` (added the `mcp`
+Python SDK and `FIGMA_ACCESS_TOKEN` for the Push to FigJam feature),
+`webapp/frontend/figjam.html` / `figjam.js` (added the Push to FigJam button).
 
 ## 5. New backend routes
 
@@ -118,6 +128,10 @@ canned demo response instead of the Pattern Analyzer's), `webapp/frontend/index.
 - `POST /api/figjam/ask` `{ "question": "..." }`: answers grounded only in the
   connected board and prior findings; marks `grounded: false` if it can't
   find support rather than guessing. Requires a prior `/connect` call.
+- `POST /api/figjam/push-to-figjam`: pushes the current analysis to a real
+  FigJam board as sections + sticky notes via Figma Console MCP (section 7).
+  Requires a prior `/analyze` call (400 if not), and Figma Desktop + the
+  Desktop Bridge plugin running (502 with a clear message if not reachable).
 
 State is in-memory, single-session, matching the existing Pattern Analyzer
 page's approach (no database introduced for this MVP).
@@ -141,7 +155,85 @@ that doesn't actually exist in the retrieved board and marks that claim
 `unsupported: true` (surfaced in the UI as "Unsupported / needs
 verification"), so Gemini cannot silently invent evidence.
 
-## 7. How to run it
+## 7. Writing output back to FigJam ("Push to FigJam")
+
+This is a separate capability from board *reading* (section 2 above), added
+after research corrected an earlier assumption in this document: a
+write-capable Figma MCP integration for FigJam does exist today, via a
+community project called **Figma Console MCP**
+(https://github.com/southleft/figma-console-mcp), which exposes tools
+including `figjam_create_section`, `figjam_create_sticky`,
+`figjam_create_stickies` (batch, up to 200), `figjam_auto_arrange`, and more.
+(Figma's own *official* remote MCP server at `mcp.figma.com` also exists, but
+only allowlists specific IDE clients like Claude Code/Cursor/VS Code; a
+custom backend cannot connect to it without joining Figma's developer
+waitlist, so it isn't used here.)
+
+**The hard constraint that can't be worked around:** Figma Console MCP does
+not write to FigJam headlessly via just an API token. It relays tool calls to
+a "Desktop Bridge" plugin that must be running *live* inside the Figma
+Desktop app, with the target FigJam board open. There is no way to push
+content to a board while Figma Desktop is closed. This is a real limitation
+of Figma's plugin sandboxing model, not a shortcut taken in this build.
+
+### What was built
+
+- `webapp/backend/figjam/figma_mcp_client.py`: a real MCP stdio client (using
+  the official `mcp` Python SDK) that spawns `npx -y figma-console-mcp@latest`
+  as a subprocess and calls its tools: `create_section`, `create_stickies`,
+  `list_tools` (used as a connectivity check that doesn't require the bridge).
+- `webapp/backend/figjam/figma_layout.py`: deterministic (non-LLM) layout
+  logic that turns the FigJam agent's analysis output into one real FigJam
+  **section** per group (Themes, Insights, Contradictions, Research Gaps,
+  Design Opportunities), each containing a grid of real sticky notes colored
+  by group, positioned with simple column/row math.
+- `POST /api/figjam/push-to-figjam` in `app.py`: runs the layout against
+  whatever analysis is currently in memory, returns a summary (sections
+  created, sticky count) or a clear error if the board/bridge isn't reachable.
+- A **Push to FigJam** button on the results page, with the setup
+  requirements stated directly in the UI, not hidden in docs only.
+
+### Setup required (all on your machine, none of this can be automated remotely)
+
+1. Install Node.js (required so the backend can run `npx`).
+2. Get a Figma personal access token (Settings > Security > Personal access
+   tokens), starts with `figd_`. Set `FIGMA_ACCESS_TOKEN=figd_...` in the repo
+   root `.env`.
+3. Open Figma Desktop, open the target FigJam board.
+4. Inside Figma Desktop: **Plugins > Development > Figma Desktop Bridge**,
+   launch it. It connects automatically; no extra config.
+5. Click **Push to FigJam** in the webapp while all of the above stays open.
+
+### What was actually tested (and what wasn't)
+
+- **Tested and confirmed working:** the MCP client genuinely spawns
+  `figma-console-mcp`, completes the real MCP `initialize` handshake, and
+  lists all 121 real tools it registers, including `figjam_create_section`
+  and `figjam_create_stickies` (confirmed live, not from documentation alone;
+  the docs actually undersold this - they didn't mention
+  `figjam_create_section` existed at all, its exact JSON schema was pulled
+  directly from the running server instead of trusted from docs).
+- **Tested and confirmed working:** the full HTTP path, `POST
+  /api/figjam/push-to-figjam` with a populated (mock-provider) analysis in
+  memory, correctly builds a layout, attempts the real tool calls, and (since
+  no Figma Desktop/Bridge was available in this environment to test against)
+  fails with a clear, specific error rather than crashing, hanging, or
+  silently "succeeding" with nothing created.
+- **Not tested: an actual sticky note or section appearing on a real FigJam
+  board.** This build environment has no GUI and cannot run Figma Desktop or
+  click through its plugin menu, so the one thing that can't be verified from
+  here is the final visual result. That step needs to happen on your machine,
+  following the setup steps above.
+
+### Known simplification
+
+`figma_layout.py` positions stickies with fixed column/row math rather than
+calling `figjam_auto_arrange`, because the batch `figjam_create_stickies`
+tool's return value (whether it includes per-sticky node ids usable by
+`auto_arrange`) wasn't confirmed live. The manual grid math achieves the same
+visual result without depending on an unverified return shape.
+
+## 8. How to run it
 
 ```bash
 cd webapp/backend
@@ -157,7 +249,11 @@ once analysis has run.
 Configure the LLM provider via the repo root `.env` (`LLM_PROVIDER=gemini|
 anthropic|openai|mock`), same as the rest of the webapp.
 
-## 8. What was tested
+To also use **Push to FigJam** (section 7): install Node.js, set
+`FIGMA_ACCESS_TOKEN` in `.env`, and have Figma Desktop open with the target
+board and the Desktop Bridge plugin running before clicking the button.
+
+## 9. What was tested
 
 - `python webapp/backend/test_figjam.py`: 7 checks, all passing. Covers
   normalization of a typical board, an unsupported FigJam node type falling
@@ -176,8 +272,11 @@ anthropic|openai|mock`), same as the rest of the webapp.
   citing real item ids.
 - Verified the empty-question validation path (`{"question": ""}` -> 400).
 - Verified `GET /figjam`, `GET /api/provider` after the change.
+- Push to FigJam: see section 7's "What was actually tested" subsection for
+  the write-path-specific tests (live MCP handshake, real tool list, full
+  HTTP route, and the honest limitation on what couldn't be verified here).
 
-## 9. What currently works
+## 10. What currently works
 
 - Retrieve (demo data) -> normalize -> analyze -> critique -> evidence
   verification -> structured frontend display -> grounded Q&A, end to end.
@@ -190,7 +289,7 @@ anthropic|openai|mock`), same as the rest of the webapp.
 - Approve / Edit / Challenge / Reject controls on insights (frontend-only
   state, per the task's guidance that this can stay local for now).
 
-## 10. What does not work / limitations
+## 11. What does not work / limitations
 
 - **No real FigJam board can be connected.** Every "Connect FigJam" click
   loads the same fixed demo board. This is the single biggest gap and is
@@ -209,8 +308,20 @@ anthropic|openai|mock`), same as the rest of the webapp.
   deprecated upstream in favor of `google-genai`; not migrated here since
   it's shared with the already-working Pattern Analyzer page and migrating
   it was out of scope for this experimental branch.
+- **"Push to FigJam" cannot be verified end-to-end from this build
+  environment.** The MCP client, subprocess spawn, handshake, and full HTTP
+  route are all confirmed genuinely working (section 9), but the actual
+  creation of a section/sticky on a real board requires Figma Desktop and the
+  Desktop Bridge plugin running with a GUI, which isn't available here. This
+  has to be verified on your own machine following the setup steps in
+  section 7.
+- No "section" grouping tool call was previously known to exist; this
+  document originally (incorrectly) stated FigJam had no section-creation
+  tool at all, based on incomplete third-party docs. That was corrected after
+  querying the running server directly and finding `figjam_create_section` in
+  its live tool list, which the layout code now uses.
 
-## 11. Future improvements
+## 12. Future improvements
 
 - Implement `MCPFigJamAdapter.fetch_board()` for real once a Figma/FigJam MCP
   tool is authorized and its schema is known, mapping its node output into
@@ -220,3 +331,12 @@ anthropic|openai|mock`), same as the rest of the webapp.
 - Migrate `GeminiProvider` off the deprecated `google-generativeai` package.
 - Add a route-level test (e.g. using Flask's test client) instead of relying
   on manual HTTP verification during development.
+- Once `figjam_create_stickies`'s return shape is confirmed to include usable
+  node ids, replace the manual grid math in `figma_layout.py` with a real
+  `figjam_auto_arrange` call for tidier, tool-driven positioning.
+- Investigate whether `MCPFigJamAdapter` (the read path, section 2) could
+  also be implemented via Figma Console MCP's `figjam_get_board_contents`
+  tool, now that this build has a working MCP client for that server. Not
+  done in this build because the effort went into the write path per the
+  user's request; the client code in `figma_mcp_client.py` could likely be
+  extended with a `get_board_contents()` call using the same session pattern.
