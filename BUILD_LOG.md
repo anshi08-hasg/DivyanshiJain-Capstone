@@ -83,23 +83,238 @@ Restarted the Flask server and re-verified via PowerShell against `http://127.0.
 
 Not tested: the visual redesign itself (layout, colors, step indicator, badges, hover states) was not exercised in an actual browser, only the underlying HTML/CSS/JS files and the API contract they depend on were verified directly.
 
-## Commit 5 — Copy Polish: "Per-participant" Rewording
+## figmaconnecttry branch — Push to FigJam (write integration)
 
-**Date:** 17 September 2026
+**Date:** 18 September 2026
 **Time spent:** Not tracked precisely this session.
-**Approx. tokens used:** Exact token usage unavailable in session (no per-task metering tool exposed to the assistant).
+**Approx. tokens used:** Exact token usage unavailable in session.
 
 ### What shipped
-- Reworded the "Per-participant research material" panel heading in `webapp/frontend/index.html` to "Participant research notes": reads as a proper section label instead of a technical modifier, consistent with how the rest of the copy already refers to "each participant."
-- Applied the same phrasing fix for consistency across the product's voice, not just the one UI string:
-  - `webapp/backend/pattern_analyzer.py`: reworded the Gemini system prompt ("compare each participant's qualitative research findings...") and the prompt-builder's context header ("Each participant's research notes follow, one section per participant.").
-  - `webapp/README.md`: reworded step 1 of the Flow section ("Paste each participant's research notes...").
+- Added a real write path from the FigJam Research Agent to an actual FigJam
+  board, on top of the existing (demo-data-only) read path from the earlier
+  FigJam agent build:
+  - `webapp/backend/figjam/figma_mcp_client.py`: a genuine MCP stdio client
+    (using the official `mcp` Python SDK) that spawns `npx -y
+    figma-console-mcp@latest` and calls its real tools: `figjam_create_section`,
+    `figjam_create_stickies`, `figjam_auto_arrange`, plus `list_tools()` as a
+    connectivity check.
+  - `webapp/backend/figjam/figma_layout.py`: deterministic (non-LLM) logic
+    that maps the agent's analysis output (themes/insights/contradictions/
+    research gaps/design opportunities) into one real FigJam section per
+    group, each containing a grid of colored sticky notes.
+  - `POST /api/figjam/push-to-figjam` in `app.py`, and a **Push to FigJam**
+    button on the results page.
+  - Installed Node.js (`winget install OpenJS.NodeJS.LTS`) and the `mcp`
+    Python SDK, since the community MCP server is an npm package spawned as
+    a subprocess.
+  - Updated `webapp/.env.example` and `requirements.txt` for `FIGMA_ACCESS_TOKEN`
+    and the `mcp` dependency.
+  - Expanded `FIGMA_CONNECT.md` (new section 7) and `test_figjam.py` (2 new
+    tests) to cover this feature honestly.
 
 ### What broke / what changed
-- Nothing broke; this was a copy-only change with no logic or schema changes.
+- Initially assumed (based on Figma's own help docs and a third-party docs
+  site) that no write-capable Figma/FigJam MCP existed at all, and separately
+  that no FigJam "section" tool existed. Both assumptions were wrong:
+  - A real write path exists via the community "Figma Console MCP" project,
+    confirmed via web search and doc fetches.
+  - `figjam_create_section` does exist. It's simply undocumented on the pages
+    fetched during initial research. The exact schema (`name`, `x`, `y`,
+    `width`, `height`, `fillColor`) was pulled directly from the live running
+    server's tool list, not trusted from any written doc, once code correctly
+    used it in place of the earlier planned workaround (a plain shape with
+    text standing in for a section).
+  - Third-party docs also stated sticky `color` accepts arbitrary hex codes;
+    the live server's schema showed it's actually a fixed enum (`YELLOW`,
+    `BLUE`, `GREEN`, `PINK`, `ORANGE`, `PURPLE`, `RED`, `LIGHT_GRAY`, `GRAY`).
+    Code was corrected to use the enum before any real tool call was attempted.
+  - Figma's *official* remote MCP server was investigated first and ruled
+    out: it only allowlists specific IDE clients (Claude Code, Cursor, VS
+    Code), and connecting a custom backend requires joining a developer
+    waitlist, so it isn't a usable path for this feature.
+- This build environment had neither Node.js nor the `mcp` Python SDK
+  installed; both were added before any of this code could even import.
 
 ### Test evidence
-- `grep -rni "per-participant" webapp/frontend/ webapp/backend/pattern_analyzer.py webapp/README.md` → zero matches, confirming the old phrasing was fully replaced in all three files.
+- `python webapp/backend/test_figjam.py`: 9 checks, all passing (7 prior +
+  2 new: layout-plan section skipping/color-enum correctness, and empty
+  analysis producing no sections).
+- **Live, real MCP handshake test** (not mocked): the client successfully
+  spawned `figma-console-mcp`, completed the MCP `initialize` handshake, and
+  listed all 121 real tools the server registers, confirming
+  `figjam_create_section` and `figjam_create_stickies` genuinely exist and
+  pulling their exact JSON schemas directly from the live server.
+- **Live write-attempt test**: called `create_section(...)` against the
+  running server with no Figma Desktop/Bridge connected -> failed with a
+  clear, specific error (not a crash or a hang), proving the failure path
+  behaves correctly when the required live bridge isn't present.
+- **Full HTTP route test**: started the Flask app, connected + analyzed via
+  the mock provider to populate state, then called `POST
+  /api/figjam/push-to-figjam` -> got the same clear 502 error end-to-end
+  through the actual route (not just the underlying function), confirming
+  the whole wiring (Flask -> asyncio -> layout builder -> MCP client ->
+  subprocess -> real tool call) works correctly up to the point where a live
+  Figma Desktop Bridge is genuinely required.
+- **Not tested and cannot be tested from this environment:** an actual
+  section or sticky note appearing on a real FigJam board. This build has no
+  GUI and cannot run Figma Desktop or its plugin menu; that final visual
+  confirmation has to happen on the user's own machine, documented step by
+  step in `FIGMA_CONNECT.md` section 7.
 
-Not tested: did not restart the Flask server or reload the page in a browser to visually confirm the new heading renders, since this was a plain static-text change with no templating logic that could alter it at render time.
+## figmaconnecttry branch — Push to FigJam verified live, plugin vendored, reconnect bug fixed
 
+**Date:** 18 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Vendored the Desktop Bridge plugin into `webapp/figma-plugin/` (copied from
+  a running `figma-console-mcp` 1.40.0 server) so it imports straight from
+  this repo instead of a hidden per-machine folder, and pinned the spawned
+  server to the matching `1.40.0` version so the two can't silently drift
+  apart.
+- Refactored `figma_mcp_client.py` to share one MCP session across an entire
+  push operation instead of opening/closing a fresh server process per tool
+  call (`create_section`/`create_stickies`/`auto_arrange` now take an
+  already-open session instead of opening their own).
+- Fixed a real error-handling bug: anyio wraps exceptions raised during tool
+  calls in nested `BaseExceptionGroup`s by the time they exit the session
+  context manager, which was silently replacing specific tool errors (e.g.
+  the actual "Cannot connect to Figma Desktop" reason) with a generic
+  fallback message. Added `_find_figma_error()` to unwrap nesting and recover
+  the real error.
+- Added `wait_for_bridge()`, which polls the server's own
+  `figma_get_status(probe=true)` tool until it reports a working roundtrip
+  (up to 30s), instead of guessing a fixed sleep. Wired into
+  `push_layout_to_figjam()` before any write is attempted.
+
+### What broke / what changed
+- Investigated (per user's explicit ask) whether Gemini could use Figma's
+  *official* remote MCP server instead of the community one, to avoid the
+  plugin requirement entirely. Verified empirically, not just from docs: a
+  raw MCP handshake against `mcp.figma.com` returned a standard OAuth
+  challenge, but attempting Dynamic Client Registration against Figma's own
+  `registration_endpoint` returned `403 Forbidden` - confirmed via Figma's
+  own support forum that PAT-based/headless auth "cannot be enabled" and
+  custom (non-allowlisted) clients cannot register at all today. This
+  confirms the plugin-based approach already built is the only currently
+  working option, for this project or any third-party integration.
+- First live push attempts failed with "Cannot connect to Figma Desktop"
+  even with the plugin genuinely running, because each push spawns a brand
+  new server process and the plugin needs several seconds to reconnect to
+  it. Root-caused by manually holding a session open for 20 seconds, which
+  let the exact same write succeed right after it had just failed instantly;
+  fixed properly with `wait_for_bridge()` rather than leaving it as a
+  "just wait and retry" manual step.
+- The generic "unhandled errors in a TaskGroup" error message (seen
+  repeatedly while diagnosing the above) was itself a bug: the real per-tool
+  error was being swallowed by the session context manager's exception
+  handling before this session's fix.
+
+### Test evidence
+- **Live, real write to an actual FigJam board, end to end, through the
+  deployed Flask route:** `POST /api/figjam/push-to-figjam` created 5 real
+  sections (Themes, Insights, Contradictions, Research Gaps, Design
+  Opportunities) and 8 real sticky notes, confirmed by the user directly in
+  their own FigJam board, with the Desktop Bridge plugin imported from
+  `webapp/figma-plugin/manifest.json` and launched in Figma Desktop.
+- Confirmed empirically (not just from documentation) that Figma's official
+  remote MCP server cannot be used by a custom backend: a direct MCP
+  `initialize` POST to `https://mcp.figma.com/mcp` returned `401` with a
+  standard OAuth challenge; a Dynamic Client Registration attempt against
+  `https://api.figma.com/v1/oauth/mcp/register` returned `403 Forbidden`.
+- `python webapp/backend/test_figjam.py`: all 9 checks still passing after
+  the client refactor and bug fixes.
+
+Not tested: Cloud Mode (server hosted remotely, e.g. on Railway, with the
+plugin pairing in via a 6-character code) was researched and explained to
+the user as the closest available path for a Railway deployment, but not
+implemented or tested this session; only Local Mode (everything on one
+machine) was verified live.
+
+## figmaconnecttry branch — Cloud Mode + Railway deployment prep
+
+**Date:** 18 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Added Cloud Mode support to `figma_mcp_client.py`: a `FIGJAM_MCP_MODE`
+  env var (`local` default, `cloud`) switches the transport between spawning
+  a local `npx` process and connecting over HTTPS to Figma Console MCP's
+  hosted relay (`figma-console-mcp.southleft.com/mcp`) using
+  `FIGMA_ACCESS_TOKEN` as Bearer auth. Local Mode cannot work once the
+  backend is hosted remotely (the plugin can only reach its own machine's
+  `localhost`), so Cloud Mode is what makes a Railway deployment viable at
+  all for this feature.
+- Added `request_pairing_code()` and `POST /api/figjam/pair` (calls the
+  relay's `figma_pair_plugin` tool), `GET /api/figjam/mode`, and a
+  **Generate pairing code** button in the frontend, shown automatically only
+  when `FIGJAM_MCP_MODE=cloud`.
+- Fixed `wait_for_bridge()` to no-op in cloud mode: `figma_get_status` (used
+  to poll for a Local Mode reconnect) isn't even a registered tool on the
+  cloud relay (95 tools there vs 121 locally), so calling it there failed
+  outright; the cloud relay doesn't need the reconnect-delay workaround
+  anyway, since pairing establishes a persistent connection, not a
+  freshly-spawned one per push.
+- Added Railway deployment plumbing: `webapp/backend/Procfile`
+  (`waitress-serve`, chosen over `gunicorn` specifically so the exact command
+  could be tested on this Windows dev machine too) and
+  `webapp/backend/nixpacks.toml` (adds Node.js to the build image alongside
+  Python, needed for Local Mode's `npx` spawn).
+
+### What broke / what changed
+- User pushed back on an earlier claim that Cloud Mode requires re-pairing
+  every ~5 minutes. Re-investigated rather than accepting the original
+  (AI-summarized) doc reading: confirmed the 5-minute window applies only to
+  redeeming the *code itself* (like an OTP), not to the established
+  connection. Verified live: a write succeeded immediately after pairing,
+  and a second write succeeded again ~90 seconds later with zero re-pairing,
+  confirming pairing is a one-time setup per plugin session.
+- Investigated using Figma's *official* remote MCP server directly (to avoid
+  the plugin entirely, per an explicit user request) before building Cloud
+  Mode. Ruled out empirically, not just from docs: a raw MCP `initialize`
+  POST to `mcp.figma.com` returned `401` with a standard OAuth challenge, and
+  a Dynamic Client Registration attempt against its own registration
+  endpoint returned `403 Forbidden` - Figma's own infrastructure rejects any
+  non-allowlisted client outright. This ruled out the plugin-free approach
+  entirely, for this project or anyone else, and justified building on the
+  community relay instead.
+- `figma_get_status` failing on the cloud relay (see above) initially
+  produced the exact same generic "Timed out... last status: not connected
+  yet" error as the earlier Local Mode timing bug, which looked identical
+  and could have been mistaken for a recurrence of it; root-caused instead
+  by directly calling `figma_get_status` on the cloud transport and getting
+  `MCP error -32602: Tool figma_get_status not found` back, which is a
+  different failure than a timing/reconnect issue and needed a different fix.
+
+### Test evidence
+- **Live end-to-end via Cloud Mode, through the actual Flask route:**
+  `POST /api/figjam/push-to-figjam` with `FIGJAM_MCP_MODE=cloud` created all
+  5 sections and 8 sticky notes on the real board, immediately, no wait -
+  compare to Local Mode's 5-30s `wait_for_bridge` delay for the same push.
+- **Persistence test:** wrote a real section via the cloud relay, waited
+  ~90 seconds doing nothing, wrote again with the same pairing (no new code)
+  - succeeded both times.
+- **Ruled out Figma's official remote MCP empirically:** `401` on a raw
+  `initialize` call to `mcp.figma.com`; `403 Forbidden` on Dynamic Client
+  Registration against `api.figma.com/v1/oauth/mcp/register`.
+- **Confirmed the community relay's own auth is separate and more open:**
+  connecting to `figma-console-mcp.southleft.com/mcp` with a plain Figma
+  personal access token as Bearer auth succeeded (95 tools listed), whereas
+  the official server rejects unlisted clients regardless of token type.
+- **Confirmed the pairing UI end-to-end:** `POST /api/figjam/pair` returned a
+  real pairing code and instructions; entering it in the plugin's Cloud Mode
+  toggle connected successfully; `GET /api/figjam/mode` correctly reports
+  `cloud`, and the frontend correctly shows the pairing button only in that
+  mode.
+- Deliberately observed a disconnect during testing (from switching the
+  plugin between Local/Cloud repeatedly) and confirmed the system surfaces a
+  clear "No plugin connected to cloud relay" error rather than hanging.
+- `python webapp/backend/test_figjam.py`: all 9 checks still passing.
+- **Not tested:** the Procfile/nixpacks.toml combination on actual Railway
+  infrastructure (no Railway CLI/account access in this environment). Only
+  the exact Procfile command (`waitress-serve --host=0.0.0.0 --port=$PORT
+  app:app`) was verified locally, and only the HTTPS/Cloud Mode transport
+  (which is what Railway would actually need) was verified live - not the
+  Railway build/deploy process itself.

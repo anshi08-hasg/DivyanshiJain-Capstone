@@ -82,6 +82,12 @@ body {
   color: var(--ink-500);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .provider-pill {
   display: flex;
   align-items: center;
