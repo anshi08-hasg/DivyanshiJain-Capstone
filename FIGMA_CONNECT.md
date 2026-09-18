@@ -105,6 +105,10 @@ webapp/frontend/figjam.html     Connect FigJam / Agent Activity / Overview /
 webapp/frontend/figjam.css      page-specific styles (verdict badges, activity
                                  checklist, ask transcript)
 webapp/frontend/figjam.js       wires the above to the API endpoints below
+webapp/figma-plugin/            Desktop Bridge plugin (manifest.json, code.js,
+                                 ui.html), vendored from figma-console-mcp
+                                 1.40.0 so it can be imported straight from
+                                 this repo (see section 7)
 ```
 
 Modified: `webapp/backend/app.py` (new routes below), `webapp/backend/llm_providers.py`
@@ -179,9 +183,21 @@ of Figma's plugin sandboxing model, not a shortcut taken in this build.
 ### What was built
 
 - `webapp/backend/figjam/figma_mcp_client.py`: a real MCP stdio client (using
-  the official `mcp` Python SDK) that spawns `npx -y figma-console-mcp@latest`
-  as a subprocess and calls its tools: `create_section`, `create_stickies`,
-  `list_tools` (used as a connectivity check that doesn't require the bridge).
+  the official `mcp` Python SDK) that spawns `npx -y figma-console-mcp@1.40.0`
+  (version-pinned, see below) as a subprocess and calls its tools:
+  `create_section`, `create_stickies`, `list_tools` (a connectivity check that
+  doesn't require the bridge). One `session()` is now shared across an entire
+  push operation rather than reopened per tool call, so a connected plugin
+  stays paired with the same server instance for the whole push instead of
+  reconnecting after every single sticky/section.
+- `webapp/figma-plugin/` (`manifest.json`, `code.js`, `ui.html`): the Desktop
+  Bridge plugin, checked into the repo (copied from a running `1.40.0`
+  server's auto-generated files) so it can be imported into Figma Desktop
+  directly from a repo-relative path instead of a hidden per-machine folder.
+  Pinned to the same `1.40.0` version as the server on purpose: using
+  `@latest` for the server while the plugin is a frozen copy would risk them
+  silently drifting apart over time. If the plugin is ever re-copied from a
+  newer server run, bump `_SERVER_PACKAGE` in `figma_mcp_client.py` to match.
 - `webapp/backend/figjam/figma_layout.py`: deterministic (non-LLM) layout
   logic that turns the FigJam agent's analysis output into one real FigJam
   **section** per group (Themes, Insights, Contradictions, Research Gaps,
@@ -200,9 +216,12 @@ of Figma's plugin sandboxing model, not a shortcut taken in this build.
    tokens), starts with `figd_`. Set `FIGMA_ACCESS_TOKEN=figd_...` in the repo
    root `.env`.
 3. Open Figma Desktop, open the target FigJam board.
-4. Inside Figma Desktop: **Plugins > Development > Figma Desktop Bridge**,
-   launch it. It connects automatically; no extra config.
-5. Click **Push to FigJam** in the webapp while all of the above stays open.
+4. **Plugins > Development > Import plugin from manifest...**, select
+   `webapp/figma-plugin/manifest.json` from this repo (one-time import; skip
+   if already imported).
+5. **Plugins > Development > Figma Desktop Bridge**, launch it. It connects
+   automatically; no extra config.
+6. Click **Push to FigJam** in the webapp while all of the above stays open.
 
 ### What was actually tested (and what wasn't)
 

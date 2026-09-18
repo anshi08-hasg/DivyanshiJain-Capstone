@@ -41,6 +41,13 @@ class FigmaMCPError(Exception):
     """Raised for any failure talking to the Figma Console MCP server."""
 
 
+# Pinned to match the Desktop Bridge plugin vendored at webapp/figma-plugin/
+# (copied from a running 1.40.0 server). Using "@latest" here while the plugin
+# is a frozen copy could silently drift out of sync with a newer server
+# version; bump both together if the plugin is ever re-copied from a newer run.
+_SERVER_PACKAGE = "figma-console-mcp@1.40.0"
+
+
 def _server_params() -> StdioServerParameters:
     token = os.environ.get("FIGMA_ACCESS_TOKEN", "").strip()
     if not token:
@@ -51,19 +58,24 @@ def _server_params() -> StdioServerParameters:
         )
     return StdioServerParameters(
         command="npx",
-        args=["-y", "figma-console-mcp@latest"],
+        args=["-y", _SERVER_PACKAGE],
         env={**os.environ, "FIGMA_ACCESS_TOKEN": token},
     )
 
 
 @asynccontextmanager
-async def _session():
+async def session():
+    """One shared MCP session, for a whole logical operation (e.g. an entire
+    board push) rather than one process spawn per tool call. A live Desktop
+    Bridge plugin connection is only useful if it can stay paired with a
+    single server instance for multiple calls in a row, not reconnect to a
+    brand-new subprocess (and likely a different port) after every call."""
     params = _server_params()
     try:
         async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                yield session
+            async with ClientSession(read, write) as sess:
+                await sess.initialize()
+                yield sess
     except FigmaMCPError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface subprocess/handshake failures clearly
@@ -78,38 +90,36 @@ async def _session():
 async def list_tools() -> list[str]:
     """Connectivity check: completes the MCP handshake and lists available tools,
     without requiring the Desktop Bridge plugin to be connected."""
-    async with _session() as session:
-        result = await session.list_tools()
+    async with session() as sess:
+        result = await sess.list_tools()
         return [t.name for t in result.tools]
 
 
-async def create_stickies(stickies: list[dict[str, Any]]) -> dict[str, Any]:
-    """stickies: list of {"text": str, "x": float, "y": float, "color": "#RRGGBB"}."""
-    async with _session() as session:
-        result = await session.call_tool("figjam_create_stickies", {"stickies": stickies})
-        return _unwrap(result)
+async def create_stickies(sess: ClientSession, stickies: list[dict[str, Any]]) -> dict[str, Any]:
+    """stickies: list of {"text": str, "x": float, "y": float, "color": "YELLOW|BLUE|..."}.
+    Pass an already-open `session()` so multiple calls share one live connection."""
+    result = await sess.call_tool("figjam_create_stickies", {"stickies": stickies})
+    return _unwrap(result)
 
 
 async def create_section(
-    name: str, x: float, y: float, width: float = 1000, height: float = 800,
+    sess: ClientSession, name: str, x: float, y: float, width: float = 1000, height: float = 800,
     fill_color: str | None = None,
 ) -> dict[str, Any]:
     """fill_color, if given, must be a "#RRGGBB" hex string."""
     args: dict[str, Any] = {"name": name, "x": x, "y": y, "width": width, "height": height}
     if fill_color:
         args["fillColor"] = fill_color
-    async with _session() as session:
-        result = await session.call_tool("figjam_create_section", args)
-        return _unwrap(result)
+    result = await sess.call_tool("figjam_create_section", args)
+    return _unwrap(result)
 
 
-async def auto_arrange(node_ids: list[str], mode: str = "grid", gap: float = 24) -> dict[str, Any]:
-    async with _session() as session:
-        result = await session.call_tool(
-            "figjam_auto_arrange",
-            {"nodeIds": node_ids, "mode": mode, "gap": gap},
-        )
-        return _unwrap(result)
+async def auto_arrange(sess: ClientSession, node_ids: list[str], mode: str = "grid", gap: float = 24) -> dict[str, Any]:
+    result = await sess.call_tool(
+        "figjam_auto_arrange",
+        {"nodeIds": node_ids, "mode": mode, "gap": gap},
+    )
+    return _unwrap(result)
 
 
 def _unwrap(result: Any) -> dict[str, Any]:

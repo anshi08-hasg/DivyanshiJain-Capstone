@@ -101,29 +101,31 @@ async def push_layout_to_figjam(analysis: dict[str, Any]) -> dict[str, Any]:
     activity: list[str] = []
     created_stickies = 0
 
-    for section in plan:
-        await mcp_client.create_section(
-            name=section["title"],
-            x=section["x"],
-            y=section["y"],
-            width=section["width"],
-            height=section["height"],
-            fill_color=section["fill_color"],
-        )
-        activity.append(f"Created section '{section['title']}'")
+    async with mcp_client.session() as sess:
+        for section in plan:
+            await mcp_client.create_section(
+                sess,
+                name=section["title"],
+                x=section["x"],
+                y=section["y"],
+                width=section["width"],
+                height=section["height"],
+                fill_color=section["fill_color"],
+            )
+            activity.append(f"Created section '{section['title']}'")
 
-        stickies = [
-            {
-                "text": text,
-                "x": section["x"] + _SECTION_PADDING + (i % _STICKIES_PER_ROW) * _STICKY_WIDTH,
-                "y": section["y"] + _SECTION_PADDING + (i // _STICKIES_PER_ROW) * _ROW_HEIGHT,
-                "color": section["sticky_color"],
-            }
-            for i, text in enumerate(section["items"])
-        ]
-        await mcp_client.create_stickies(stickies)
-        created_stickies += len(stickies)
-        activity.append(f"Created {len(stickies)} sticky note(s) in '{section['title']}'")
+            stickies = [
+                {
+                    "text": text,
+                    "x": section["x"] + _SECTION_PADDING + (i % _STICKIES_PER_ROW) * _STICKY_WIDTH,
+                    "y": section["y"] + _SECTION_PADDING + (i // _STICKIES_PER_ROW) * _ROW_HEIGHT,
+                    "color": section["sticky_color"],
+                }
+                for i, text in enumerate(section["items"])
+            ]
+            await mcp_client.create_stickies(sess, stickies)
+            created_stickies += len(stickies)
+            activity.append(f"Created {len(stickies)} sticky note(s) in '{section['title']}'")
 
     return {
         "sections": [s["title"] for s in plan],
