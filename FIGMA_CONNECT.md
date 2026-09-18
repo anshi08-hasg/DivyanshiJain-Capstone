@@ -96,7 +96,8 @@ webapp/backend/figjam/
   research_agent.py     connect_board(), analyze_research(), ask_question()
                         (Gemini calls + evidence verification + activity log)
   figma_mcp_client.py    real MCP client for Figma Console MCP (write path):
-                        create_section(), create_stickies(), list_tools()
+                        create_section(), create_stickies(), list_tools(),
+                        wait_for_bridge() (polls for the plugin to reconnect)
   figma_layout.py        deterministic analysis-output -> FigJam layout plan,
                         push_layout_to_figjam()
 webapp/backend/test_figjam.py   standalone checks, run with `python test_figjam.py`
@@ -238,11 +239,29 @@ of Figma's plugin sandboxing model, not a shortcut taken in this build.
   no Figma Desktop/Bridge was available in this environment to test against)
   fails with a clear, specific error rather than crashing, hanging, or
   silently "succeeding" with nothing created.
-- **Not tested: an actual sticky note or section appearing on a real FigJam
-  board.** This build environment has no GUI and cannot run Figma Desktop or
-  click through its plugin menu, so the one thing that can't be verified from
-  here is the final visual result. That step needs to happen on your machine,
-  following the setup steps above.
+- **Confirmed working live, on a real FigJam board, with the user driving the
+  Figma Desktop side:** with the plugin imported from `webapp/figma-plugin/`
+  and launched, a full `POST /api/figjam/push-to-figjam` call created all 5
+  real sections (Themes, Insights, Contradictions, Research Gaps, Design
+  Opportunities) and 8 real sticky notes on an actual board, end to end,
+  through the deployed Flask route, not just the underlying function.
+- **Bug found and fixed during this live test:** every push spawns a brand
+  new `figma-console-mcp` server process (see `session()`'s docstring), so
+  even an already-launched plugin needs several seconds to notice the new
+  instance and reconnect its WebSocket. The first live attempts failed with
+  "Cannot connect to Figma Desktop" even though the plugin was genuinely
+  running, purely due to this reconnect delay - confirmed by manually holding
+  a session open for 20 seconds, which let the exact same write succeed right
+  after it had just failed instantly. Fixed properly with
+  `wait_for_bridge()`, which polls the server's own `figma_get_status(probe=
+  true)` tool until it reports a working roundtrip (up to a 30s timeout),
+  instead of guessing a fixed sleep. Also fixed a real bug in error handling:
+  anyio wraps exceptions raised during tool calls in nested
+  `BaseExceptionGroup`s by the time they propagate out of the session context
+  manager, which was silently replacing specific tool error messages (like
+  the actual "Cannot connect to Figma Desktop" reason) with a generic
+  fallback; `_find_figma_error()` now unwraps nesting to recover the real
+  message.
 
 ### Known simplification
 
@@ -327,13 +346,19 @@ board and the Desktop Bridge plugin running before clicking the button.
   deprecated upstream in favor of `google-genai`; not migrated here since
   it's shared with the already-working Pattern Analyzer page and migrating
   it was out of scope for this experimental branch.
-- **"Push to FigJam" cannot be verified end-to-end from this build
-  environment.** The MCP client, subprocess spawn, handshake, and full HTTP
-  route are all confirmed genuinely working (section 9), but the actual
-  creation of a section/sticky on a real board requires Figma Desktop and the
-  Desktop Bridge plugin running with a GUI, which isn't available here. This
-  has to be verified on your own machine following the setup steps in
-  section 7.
+- ~~"Push to FigJam" cannot be verified end-to-end from this build
+  environment~~ **Resolved:** verified live with the user driving the Figma
+  Desktop/plugin side (section 7). A real push (5 sections, 8 stickies)
+  succeeded through the actual deployed Flask route on a real FigJam board.
+- **Every push still takes ~5-30 seconds** even when everything is already
+  running, because `wait_for_bridge()` has to wait for the plugin to
+  reconnect to the freshly-spawned server before any write can succeed (see
+  section 7). This is inherent to how the community server works (a new
+  process per session, not a long-lived daemon), not something fixable in
+  our own code without changing that server's architecture.
+- **Auto-arrange isn't used**, so sticky layout inside each section is fixed
+  grid math rather than Figma's own layout tool; see the "Known
+  simplification" note in section 7.
 - No "section" grouping tool call was previously known to exist; this
   document originally (incorrectly) stated FigJam had no section-creation
   tool at all, based on incomplete third-party docs. That was corrected after

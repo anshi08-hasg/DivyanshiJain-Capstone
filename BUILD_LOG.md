@@ -160,3 +160,74 @@ Not tested: the visual redesign itself (layout, colors, step indicator, badges, 
   GUI and cannot run Figma Desktop or its plugin menu; that final visual
   confirmation has to happen on the user's own machine, documented step by
   step in `FIGMA_CONNECT.md` section 7.
+
+## figmaconnecttry branch — Push to FigJam verified live, plugin vendored, reconnect bug fixed
+
+**Date:** 18 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Vendored the Desktop Bridge plugin into `webapp/figma-plugin/` (copied from
+  a running `figma-console-mcp` 1.40.0 server) so it imports straight from
+  this repo instead of a hidden per-machine folder, and pinned the spawned
+  server to the matching `1.40.0` version so the two can't silently drift
+  apart.
+- Refactored `figma_mcp_client.py` to share one MCP session across an entire
+  push operation instead of opening/closing a fresh server process per tool
+  call (`create_section`/`create_stickies`/`auto_arrange` now take an
+  already-open session instead of opening their own).
+- Fixed a real error-handling bug: anyio wraps exceptions raised during tool
+  calls in nested `BaseExceptionGroup`s by the time they exit the session
+  context manager, which was silently replacing specific tool errors (e.g.
+  the actual "Cannot connect to Figma Desktop" reason) with a generic
+  fallback message. Added `_find_figma_error()` to unwrap nesting and recover
+  the real error.
+- Added `wait_for_bridge()`, which polls the server's own
+  `figma_get_status(probe=true)` tool until it reports a working roundtrip
+  (up to 30s), instead of guessing a fixed sleep. Wired into
+  `push_layout_to_figjam()` before any write is attempted.
+
+### What broke / what changed
+- Investigated (per user's explicit ask) whether Gemini could use Figma's
+  *official* remote MCP server instead of the community one, to avoid the
+  plugin requirement entirely. Verified empirically, not just from docs: a
+  raw MCP handshake against `mcp.figma.com` returned a standard OAuth
+  challenge, but attempting Dynamic Client Registration against Figma's own
+  `registration_endpoint` returned `403 Forbidden` - confirmed via Figma's
+  own support forum that PAT-based/headless auth "cannot be enabled" and
+  custom (non-allowlisted) clients cannot register at all today. This
+  confirms the plugin-based approach already built is the only currently
+  working option, for this project or any third-party integration.
+- First live push attempts failed with "Cannot connect to Figma Desktop"
+  even with the plugin genuinely running, because each push spawns a brand
+  new server process and the plugin needs several seconds to reconnect to
+  it. Root-caused by manually holding a session open for 20 seconds, which
+  let the exact same write succeed right after it had just failed instantly;
+  fixed properly with `wait_for_bridge()` rather than leaving it as a
+  "just wait and retry" manual step.
+- The generic "unhandled errors in a TaskGroup" error message (seen
+  repeatedly while diagnosing the above) was itself a bug: the real per-tool
+  error was being swallowed by the session context manager's exception
+  handling before this session's fix.
+
+### Test evidence
+- **Live, real write to an actual FigJam board, end to end, through the
+  deployed Flask route:** `POST /api/figjam/push-to-figjam` created 5 real
+  sections (Themes, Insights, Contradictions, Research Gaps, Design
+  Opportunities) and 8 real sticky notes, confirmed by the user directly in
+  their own FigJam board, with the Desktop Bridge plugin imported from
+  `webapp/figma-plugin/manifest.json` and launched in Figma Desktop.
+- Confirmed empirically (not just from documentation) that Figma's official
+  remote MCP server cannot be used by a custom backend: a direct MCP
+  `initialize` POST to `https://mcp.figma.com/mcp` returned `401` with a
+  standard OAuth challenge; a Dynamic Client Registration attempt against
+  `https://api.figma.com/v1/oauth/mcp/register` returned `403 Forbidden`.
+- `python webapp/backend/test_figjam.py`: all 9 checks still passing after
+  the client refactor and bug fixes.
+
+Not tested: Cloud Mode (server hosted remotely, e.g. on Railway, with the
+plugin pairing in via a 6-character code) was researched and explained to
+the user as the closest available path for a Railway deployment, but not
+implemented or tested this session; only Local Mode (everything on one
+machine) was verified live.

@@ -29,6 +29,8 @@ Setup required on the user's machine before any call here can succeed:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import Any
@@ -63,6 +65,23 @@ def _server_params() -> StdioServerParameters:
     )
 
 
+def _find_figma_error(exc: BaseException) -> FigmaMCPError | None:
+    """anyio's TaskGroup wraps exceptions raised inside `yield sess` in
+    (possibly nested) BaseExceptionGroups by the time they propagate back out
+    through stdio_client's/ClientSession's __aexit__. A plain
+    `except FigmaMCPError` doesn't match those anymore, which was silently
+    replacing specific tool errors with the generic "could not connect"
+    message. This digs through any nesting to find the original error."""
+    if isinstance(exc, FigmaMCPError):
+        return exc
+    if isinstance(exc, BaseExceptionGroup):
+        for sub in exc.exceptions:
+            found = _find_figma_error(sub)
+            if found:
+                return found
+    return None
+
+
 @asynccontextmanager
 async def session():
     """One shared MCP session, for a whole logical operation (e.g. an entire
@@ -76,9 +95,10 @@ async def session():
             async with ClientSession(read, write) as sess:
                 await sess.initialize()
                 yield sess
-    except FigmaMCPError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - surface subprocess/handshake failures clearly
+    except Exception as exc:  # noqa: BLE001 - surface subprocess/handshake/tool errors clearly
+        specific = _find_figma_error(exc)
+        if specific:
+            raise specific from exc
         raise FigmaMCPError(
             f"Could not connect to the Figma Console MCP server ({exc}). Check that: "
             "Node.js/npx is installed, Figma Desktop is open with the target FigJam "
@@ -93,6 +113,41 @@ async def list_tools() -> list[str]:
     async with session() as sess:
         result = await sess.list_tools()
         return [t.name for t in result.tools]
+
+
+async def wait_for_bridge(sess: ClientSession, timeout: float = 30, poll_interval: float = 2) -> None:
+    """Every push spawns a brand-new server process (see session() above), so
+    even an already-open Desktop Bridge plugin needs several seconds to
+    notice the new instance and reconnect its WebSocket. Calling a write tool
+    immediately after opening a session fails with "Cannot connect to Figma
+    Desktop" even when the plugin is genuinely running, purely due to this
+    reconnect delay - confirmed live: a manual 20s wait let a real write
+    succeed right after the same call failed instantly. This polls
+    figma_get_status(probe=true) until the bridge reports a working
+    roundtrip, instead of guessing a fixed sleep."""
+    elapsed = 0.0
+    last_error = "no response yet"
+    while elapsed < timeout:
+        result = await sess.call_tool("figma_get_status", {"probe": True})
+        text = next((b.text for b in result.content if getattr(b, "type", None) == "text"), "{}")
+        try:
+            status = json.loads(text)
+        except json.JSONDecodeError:
+            status = {}
+
+        probe = status.get("setup", {}).get("probeResult", {})
+        if probe.get("success"):
+            return
+        last_error = probe.get("error") or status.get("setup", {}).get("message") or "not connected yet"
+
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+    raise FigmaMCPError(
+        f"Timed out after {timeout:.0f}s waiting for the Figma Desktop Bridge plugin to connect "
+        f"(last status: {last_error}). Make sure Figma Desktop is open with the target FigJam "
+        "board, and Plugins > Development > Figma Desktop Bridge has been launched."
+    )
 
 
 async def create_stickies(sess: ClientSession, stickies: list[dict[str, Any]]) -> dict[str, Any]:

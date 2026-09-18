@@ -102,6 +102,9 @@ async def push_layout_to_figjam(analysis: dict[str, Any]) -> dict[str, Any]:
     created_stickies = 0
 
     async with mcp_client.session() as sess:
+        await mcp_client.wait_for_bridge(sess)
+        activity.append("Connected to Figma Desktop Bridge")
+
         for section in plan:
             await mcp_client.create_section(
                 sess,
