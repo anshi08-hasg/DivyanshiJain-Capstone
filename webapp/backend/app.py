@@ -195,4 +195,12 @@ def figjam_push():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # Only reached if something runs `python app.py` directly instead of the
+    # Procfile's waitress-serve command (confirmed happening on Railway with
+    # the Railpack builder, which appears not to read the Procfile at all).
+    # Binds 0.0.0.0 and respects $PORT so it's at least reachable and on the
+    # right port if that happens again, and debug defaults off so a stray
+    # direct run in production doesn't expose the Werkzeug debugger/PIN.
+    debug = os.environ.get("FLASK_DEBUG", "").strip().lower() in ("1", "true", "yes")
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=debug, host="0.0.0.0", port=port)
