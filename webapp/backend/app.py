@@ -202,5 +202,5 @@ if __name__ == "__main__":
     # right port if that happens again, and debug defaults off so a stray
     # direct run in production doesn't expose the Werkzeug debugger/PIN.
     debug = os.environ.get("FLASK_DEBUG", "").strip().lower() in ("1", "true", "yes")
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", "").strip() or 5000)
     app.run(debug=debug, host="0.0.0.0", port=port)
