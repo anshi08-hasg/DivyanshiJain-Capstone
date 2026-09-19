@@ -448,3 +448,84 @@ machine) was verified live.
   exercises the identical CORS/config.js code path but isn't a substitute
   for the real infrastructure. The user still needs to deploy both services
   and confirm.
+
+## figmaconnecttry branch — Real two-service Railway deployment debugging
+
+**Date:** 19 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Fixed a second instance of the missing-scheme bug: `FRONTEND_ORIGIN` (used
+  to configure CORS on the backend) was set to a bare Railway hostname, same
+  mistake as the earlier `BACKEND_URL` bug. Added `_normalize_origin()` in
+  `app.py`, mirroring `server.py`'s `_normalize_backend_url()`, so a missing
+  `https://` is auto-added before being passed to `flask_cors.CORS()`.
+- Added copy-to-clipboard for FigJam pairing codes: auto-copies as soon as
+  the code is generated, plus a manual "Copy" button that shows "Copy
+  failed, select manually" if clipboard access is blocked, so the failure
+  is visible rather than silent.
+- Added 2 new tests (`test_normalize_origin_adds_missing_scheme`,
+  building on the existing `test_normalize_backend_url_adds_missing_scheme`
+  pattern) - 11 checks total now, all passing.
+
+### What broke / what changed (all found on real Railway infrastructure, none of it reproducible locally beforehand)
+- **Both services individually looked "successfully deployed" while being
+  completely unreachable.** Root cause, found from actual deploy + HTTP
+  network logs the user pulled: each service's **Public Networking target
+  port** didn't match the port the container actually listened on. The
+  frontend needed `8080` (Railway's own default `$PORT`, confirmed from its
+  deploy log: `Serving on http://0.0.0.0:8080`); the backend's domain was
+  still configured for `5000` (a leftover from local-dev assumptions) while
+  its container also listened on `8080`. Every request hit Railway's edge
+  proxy, which had nothing to route to, and returned a fast, uniform `502`
+  on every single path (including plain `GET /`) - a pattern that, in
+  hindsight, is the signature of a routing/port mismatch rather than an
+  app-level crash (a real crash would vary in latency and, in this app's
+  case, only affect specific broken code paths, not literally every route
+  including static assets that had never changed).
+- Confirmed Railpack *can* pick up `Procfile` correctly (contradicting an
+  earlier build attempt) - once Root Directory was actually set correctly,
+  the build log explicitly showed `Found web command in Procfile` and
+  `Deploy: waitress-serve --host=0.0.0.0 --port=$PORT app:app`, and the
+  container logs confirmed `waitress` really was serving, not Flask's dev
+  server. The earlier "ran `python app.py` directly" failure mode from a
+  previous session was most likely caused by the Root Directory
+  misconfiguration at the time, not a fundamental Railpack/Procfile
+  incompatibility as originally assumed and documented.
+- **The "Pair with FigJam" box was invisible on the deployed frontend even
+  after both services were reachable and the copy button had shipped.**
+  Root-caused by directly curling the backend's `/api/figjam/mode` endpoint
+  with the exact `Origin` header a real browser sends: it returned `200`
+  with the correct body, but with no `Access-Control-Allow-Origin` header
+  at all. A second curl with no `Origin` header at all returned the raw,
+  schemeless `FRONTEND_ORIGIN` value reflected directly, which is what
+  revealed the actual misconfigured value without needing dashboard access.
+  This confirms the earlier `BACKEND_URL` scheme bug was not a one-off typo
+  but a pattern this Railway setup makes easy to hit (its UI shows generated
+  domains without their scheme, inviting exactly this mistake), which is why
+  both instances got a defensive code fix rather than only a "fix your env
+  var" instruction.
+
+### Test evidence
+- User confirmed live: the full Pattern Analyzer flow (Run Pattern Analysis,
+  Finalize approved output) works end to end on the deployed two-service
+  setup after the port fixes.
+- User confirmed live: a real FigJam Desktop Bridge plugin pairing,
+  including generating a fresh code via the deployed backend's
+  `/api/figjam/pair` and seeing prior real pushed content
+  (Themes/Insights/Contradictions/Research Gaps/Design Opportunities
+  sections) already present on their actual FigJam board from earlier
+  sessions.
+- Verified live, directly against the deployed backend: `curl` with the
+  exact browser-sent `Origin` header got no CORS header (confirming the
+  bug); `curl` with no `Origin` header reflected the raw misconfigured
+  value (revealing what it actually was set to); after the code fix,
+  reproduced the identical scenario locally with `FRONTEND_ORIGIN` set to
+  that exact schemeless value and confirmed `Access-Control-Allow-Origin`
+  now correctly includes the scheme.
+- `python webapp/backend/test_figjam.py`: 11 checks, all passing.
+- **Not yet confirmed:** whether the `FRONTEND_ORIGIN` fix resolves the
+  pairing box's visibility on the actual deployed frontend - fixed and
+  verified against the exact real-world value, but the user still needs to
+  wait for the backend to redeploy and check the live page.
