@@ -1,3 +1,58 @@
+.debug-summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.debug-summary::-webkit-details-marker { display: none; }
+
+.debug-count {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  margin: 10px 0;
+}
+
+.debug-table-wrap {
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.debug-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.debug-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-sunken);
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 700;
+  color: var(--ink-500);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+}
+
+.debug-table td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-700);
+  vertical-align: top;
+}
+
+.badge-insufficient {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.confidence-strong { background: var(--accent-soft); color: var(--accent-strong); }
+.confidence-medium { background: #fff3cf; color: #8a6300; }
+.confidence-limited, .confidence-insufficient { background: var(--warn-soft); color: var(--warn); }
+
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));

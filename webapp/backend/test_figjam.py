@@ -10,7 +10,7 @@ import sys
 
 from figjam.adapter import MCPFigJamAdapter, _map_board_data_to_raw_items
 from figjam.normalize import normalize_board
-from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidence, connect_board
+from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidence, _evidence_confidence, connect_board
 from figjam.figma_layout import build_layout_plan
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "frontend"))
@@ -106,6 +106,55 @@ def test_map_board_data_infers_section_and_participant_geometrically():
     outside_item = next(i for i in items if i["id"] == "3")
     assert outside_item["section"] is None
     assert "participant" not in outside_item["metadata"]
+
+
+def test_map_board_data_extracts_participant_from_full_header_line():
+    # Confirmed live against a real FigJam board: researchers often write a
+    # full "Participant P1 - Name" header rather than a bare "P1: ..." tag -
+    # the participant regex must recognize this too, not just the terse form,
+    # otherwise every real sticky's participant metadata comes back empty
+    # even though the participant is clearly named in the text.
+    board_data = {
+        "nodes": [
+            {"id": 4, "type": "STICKY", "text": "Participant P1 — Aditi\nAge: 20\nQ1. ...", "x": 0, "y": 0},
+            {"id": 5, "type": "STICKY", "text": "[P2] prefers EDM", "x": 0, "y": 0},
+        ]
+    }
+    items = _map_board_data_to_raw_items(board_data)
+    assert next(i for i in items if i["id"] == "4")["metadata"]["participant"] == "P1"
+    assert next(i for i in items if i["id"] == "5")["metadata"]["participant"] == "P2"
+
+
+def test_evidence_confidence_reflects_count_and_participant_diversity():
+    # Confidence must come from code, not the LLM's self-reported "strength" -
+    # a model saying "strong" is not evidence of anything, so this is computed
+    # purely from how many verified items exist and how many distinct
+    # participants they span.
+    context = normalize_board({
+        "board_name": "Test",
+        "raw_items": [
+            {"id": "N1", "type": "sticky", "content": "a", "metadata": {"participant": "P1"}},
+            {"id": "N2", "type": "sticky", "content": "b", "metadata": {"participant": "P2"}},
+            {"id": "N3", "type": "sticky", "content": "c", "metadata": {"participant": "P2"}},
+            {"id": "N4", "type": "sticky", "content": "d"},
+        ],
+    })
+
+    result = _evidence_confidence(context, [])
+    assert result["confidence"] == "insufficient"
+    assert result["participant_coverage"] == []
+    assert result["evidence_count"] == 0
+
+    result = _evidence_confidence(context, ["N1"])
+    assert result["confidence"] == "limited"
+    assert result["participant_coverage"] == ["P1"]
+
+    result = _evidence_confidence(context, ["N1", "N4"])
+    assert result["confidence"] == "medium", "2 items but only 1 with a participant should not reach 'strong'"
+
+    result = _evidence_confidence(context, ["N1", "N2", "N3"])
+    assert result["confidence"] == "strong"
+    assert result["participant_coverage"] == ["P1", "P2"], "must be distinct participants, not one per item"
 
 
 def test_parse_json_handles_fenced_and_malformed():

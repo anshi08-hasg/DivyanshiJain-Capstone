@@ -22,7 +22,7 @@ const askInput = document.getElementById("ask-input");
 const askBtn = document.getElementById("ask-btn");
 const askError = document.getElementById("ask-error");
 
-let state = { themes: [], insights: [], contradictions: [], gaps: [], opportunities: [] };
+let state = { themes: [], insights: [], contradictions: [], gaps: [], opportunities: [], items: {} };
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -70,6 +70,10 @@ connectBtn.addEventListener("click", async () => {
     activitySection.hidden = false;
     renderActivity(data.activity);
 
+    state.items = {};
+    (data.items || []).forEach((item) => { state.items[item.id] = item; });
+    renderDebugPanel(data.items || []);
+
     const statusPill = document.getElementById("board-status-pill");
     const statusLabel = document.getElementById("board-status-label");
     if (statusPill && statusLabel) {
@@ -93,9 +97,46 @@ function verdictBadge(insight) {
 
 function evidenceChips(ids) {
   if (!ids || ids.length === 0) {
-    return `<span class="badge">Unsupported / needs verification</span>`;
+    return `<span class="badge badge-insufficient">Insufficient evidence</span>`;
   }
-  return ids.map((id) => `<span class="badge">${escapeHtml(id)}</span>`).join(" ");
+  return ids.map((id) => {
+    const item = state.items[id];
+    const label = item && item.metadata && item.metadata.participant
+      ? `${id} (${item.metadata.participant})`
+      : id;
+    const quote = item ? item.content : "";
+    return `<span class="badge" title="${escapeHtml(quote)}">${escapeHtml(label)}</span>`;
+  }).join(" ");
+}
+
+function confidenceBadge(entry) {
+  const confidence = entry.confidence || "insufficient";
+  const count = entry.evidence_count ?? (entry.evidence || []).length;
+  const participants = entry.participant_coverage || [];
+  const coverage = participants.length > 0 ? `, ${participants.join(", ")}` : "";
+  return `<span class="badge confidence-${confidence}">confidence: ${escapeHtml(confidence)} (${count} item${count === 1 ? "" : "s"}${escapeHtml(coverage)})</span>`;
+}
+
+function renderDebugPanel(items) {
+  const section = document.getElementById("debug-section");
+  const list = document.getElementById("debug-items");
+  const countEl = document.getElementById("debug-count");
+  if (!section || !list) return;
+
+  const researchNodes = items.filter((i) => i.type !== "section");
+  countEl.textContent = `Total nodes: ${items.length} | Research nodes: ${researchNodes.length} | Sections: ${items.length - researchNodes.length}`;
+
+  list.innerHTML = items.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.id)}</td>
+      <td>${escapeHtml(item.type)}</td>
+      <td>${escapeHtml(item.section || "")}</td>
+      <td>${escapeHtml((item.metadata && item.metadata.participant) || "")}</td>
+      <td>${escapeHtml(item.content)}</td>
+    </tr>
+  `).join("");
+
+  section.hidden = false;
 }
 
 function makeDecisionRow(item, onChange) {
@@ -118,7 +159,7 @@ function renderThemeCard(theme) {
   card.innerHTML = `
     <h4>${escapeHtml(theme.id)}: ${escapeHtml(theme.name)}</h4>
     <div class="meta">
-      <span class="badge">strength: ${escapeHtml(theme.strength)}</span>
+      ${confidenceBadge(theme)}
       ${evidenceChips(theme.evidence)}
     </div>
     ${theme.rationale ? `<div class="interpretation">Rationale (inference): ${escapeHtml(theme.rationale)}</div>` : ""}
@@ -133,7 +174,7 @@ function renderInsightCard(insight) {
     <h4>${escapeHtml(insight.id)}: ${escapeHtml(insight.statement)}</h4>
     <div class="meta">
       ${verdictBadge(insight)}
-      <span class="badge">strength: ${escapeHtml(insight.strength)}</span>
+      ${confidenceBadge(insight)}
       ${evidenceChips(insight.evidence)}
     </div>
     <div class="critic-note"><strong>Research Critic:</strong> ${escapeHtml(insight.verdict_note || "")}</div>
@@ -162,7 +203,7 @@ function renderContradictionCard(con) {
   card.innerHTML = `
     <h4>${escapeHtml(con.id)}</h4>
     <div>${escapeHtml(con.description)}</div>
-    <div class="meta">${evidenceChips(con.evidence)}</div>
+    <div class="meta">${confidenceBadge(con)}${evidenceChips(con.evidence)}</div>
   `;
   return card;
 }

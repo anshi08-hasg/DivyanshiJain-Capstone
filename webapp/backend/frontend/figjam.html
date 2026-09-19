@@ -72,6 +72,24 @@
         <div id="overview-grid" class="overview-grid"></div>
       </section>
 
+      <section id="debug-section" class="panel" hidden>
+        <details>
+          <summary class="panel-head debug-summary">
+            <h2>FigJam data received</h2>
+            <p class="panel-sub">Compare this against what's actually on your board to verify the extraction is correct before trusting the analysis below.</p>
+          </summary>
+          <p id="debug-count" class="panel-sub debug-count"></p>
+          <div class="debug-table-wrap">
+            <table class="debug-table">
+              <thead>
+                <tr><th>ID</th><th>Type</th><th>Section</th><th>Participant</th><th>Original text</th></tr>
+              </thead>
+              <tbody id="debug-items"></tbody>
+            </table>
+          </div>
+        </details>
+      </section>
+
       <section id="activity-section" class="panel" hidden>
         <div class="panel-head">
           <h2>Agent activity</h2>
