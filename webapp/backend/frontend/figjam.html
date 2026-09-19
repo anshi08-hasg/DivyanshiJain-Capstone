@@ -28,11 +28,12 @@
       <a href="/" class="btn btn-ghost">Pattern Analyzer</a>
     </header>
 
-    <p class="experiment-banner">
-      Experimental branch. No live Figma/FigJam MCP tool is available in this environment yet,
-      so "Connect FigJam" runs the full pipeline against a fixed demo research board instead of
-      a real one. Everything downstream (retrieval, normalization, Gemini analysis, the critic
-      pass, and evidence checks) is real and runs against whatever LLM provider is configured.
+    <p class="experiment-banner" id="experiment-banner">
+      Experimental branch. If a Figma personal access token is configured, "Connect FigJam"
+      reads the real, currently active/focused page in your Figma Desktop live. Without one,
+      it runs the same pipeline against a fixed demo research board instead. Everything
+      downstream (retrieval, normalization, Gemini analysis, the critic pass, and evidence
+      checks) is real either way and runs against whatever LLM provider is configured.
     </p>
 
     <main>

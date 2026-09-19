@@ -69,6 +69,13 @@ connectBtn.addEventListener("click", async () => {
     overviewSection.hidden = false;
     activitySection.hidden = false;
     renderActivity(data.activity);
+
+    const banner = document.getElementById("experiment-banner");
+    if (banner) {
+      banner.textContent = data.is_demo
+        ? "Connected to the demo board (sample data, not live FigJam). Set FIGMA_ACCESS_TOKEN to read your real board instead."
+        : "Connected to your real, live FigJam board (whatever page is currently active/focused in Figma Desktop).";
+    }
   } catch (err) {
     connectError.textContent = err.message;
     connectError.hidden = false;

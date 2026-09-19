@@ -529,3 +529,73 @@ machine) was verified live.
   pairing box's visibility on the actual deployed frontend - fixed and
   verified against the exact real-world value, but the user still needs to
   wait for the backend to redeploy and check the live page.
+
+## figmaconnecttry branch — Real FigJam board reading (replaces demo-only "Connect FigJam")
+
+**Date:** 19 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Implemented `MCPFigJamAdapter.fetch_board()` for real, using the same
+  `figma_mcp_client` session already built for Push to FigJam. Added
+  `get_board_contents()` to `figma_mcp_client.py` (calls
+  `figjam_get_board_contents`) and `_map_board_data_to_raw_items()` /
+  `_find_containing_section()` to `adapter.py`, mapping real Figma node data
+  into the existing evidence schema.
+- `MCPFigJamAdapter.is_available()` now reflects whether `FIGMA_ACCESS_TOKEN`
+  is configured (previously always `False`); `get_adapter()` already
+  preferred it automatically once available, so no dispatch logic needed to
+  change, only the adapter's own honesty about its capability.
+- Made `connect_board()`, `FigJamAdapter.fetch_board()`, and
+  `/api/figjam/connect` async throughout, since the real read path needs the
+  same `asyncio`/MCP session machinery as the write path.
+- Updated the frontend's experimental banner and connect handler to state
+  whether the connected board is real or demo, based on the actual
+  `is_demo` flag, instead of a fixed "always demo" claim.
+- Added 2 new tests replacing the now-outdated
+  `test_mcp_adapter_is_honest_about_being_unavailable` (which asserted
+  permanent unavailability, no longer true): one confirming
+  `is_available()` tracks the token, one confirming the geometric
+  section/participant-inference mapping against real-shaped node data.
+
+### What broke / what changed
+- Discovered live that `figjam_get_board_contents` has no board/page
+  selector parameter at all - it always reads whichever page is currently
+  active/focused in Figma Desktop. First attempt against a board that
+  looked populated on screen returned `0` nodes; root-caused (with the
+  user's help confirming what was actually focused) to a different
+  page/file being focused at that moment, not a bug in the read call.
+- To get the real response shape rather than guess from documentation,
+  created a real sticky and a real section on the user's live board via the
+  already-working write path, then read them back immediately - this
+  revealed the real shape (`{id, type, name, x, y, width, height, text?,
+  color?, childCount?}`) and, critically, that there is **no parent/child
+  linkage** returned for section membership (a `SECTION` node only reports
+  its own `childCount`), which is why section assignment had to be inferred
+  geometrically (bounding-box containment) instead of read directly.
+- Fixed 3 tests broken by making `fetch_board`/`connect_board` async
+  (`coroutine was never awaited` / `'coroutine' object is not subscriptable`
+  errors) and by `MCPFigJamAdapter.is_available()` no longer always
+  returning `False` - `test_connect_board_demo_succeeds` now explicitly
+  forces the demo path via monkeypatching, since it would otherwise be
+  affected by whatever `FIGMA_ACCESS_TOKEN` happens to be in the test
+  process's environment (which is loaded from the real `.env` as a side
+  effect of `test_figjam.py` importing `app.py` for an unrelated test).
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 12 checks, all passing.
+- **Live, end to end, through the real Flask route:** `POST
+  /api/figjam/connect` returned `is_demo: false`, a real board name ("Live
+  FigJam board: Page 1"), and the exact 2 real items that existed on the
+  board at that moment, with correct type/section/id mapping.
+- Ran `/api/figjam/analyze` against this real data immediately afterward:
+  the mock LLM provider's canned response cited evidence ids from the old
+  demo dataset that don't exist among the real board's actual item ids, and
+  the existing evidence-verification code correctly caught this and marked
+  every theme/insight/contradiction `unsupported: true` - confirming the
+  evidence-integrity check works correctly against genuinely real input,
+  not just the fixture data it was originally tested against.
+- **Not tested:** real Gemini reasoning over real board content end to end
+  (the deployed/local `.env` currently has `LLM_PROVIDER=mock`); only the
+  mock-provider path was verified against real board data this session.

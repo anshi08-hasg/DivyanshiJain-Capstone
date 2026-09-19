@@ -125,7 +125,7 @@ def figjam_connect():
     board_ref = data.get("board_ref", "").strip() or "default"
 
     try:
-        result = connect_board(board_ref)
+        result = asyncio.run(connect_board(board_ref))
     except FigJamAgentError as exc:
         return jsonify({"error": str(exc)}), 502
 

@@ -247,6 +247,28 @@ async def create_section(
     return _unwrap(result)
 
 
+async def get_board_contents(sess: ClientSession, node_types: list[str] | None = None, max_nodes: int = 500) -> dict[str, Any]:
+    """Reads whatever page is currently active/focused in Figma Desktop -
+    confirmed live there is no board/page selector parameter, so this always
+    reflects the page the user has open at call time, not a specific board
+    chosen remotely. Real response shape confirmed live:
+    {"nodes": [{"id", "type", "name", "x", "y", "width", "height", "text"?,
+    "color"?, "childCount"? (SECTION only)}, ...], "totalFound", "truncated",
+    "page"}."""
+    args: dict[str, Any] = {"maxNodes": max_nodes}
+    if node_types:
+        args["nodeTypes"] = node_types
+    result = await sess.call_tool("figjam_get_board_contents", args)
+    unwrapped = _unwrap(result)
+    try:
+        parsed = json.loads(unwrapped["raw_text"])
+    except (KeyError, json.JSONDecodeError) as exc:
+        raise FigmaMCPError(f"Unexpected response reading the board: {unwrapped}") from exc
+    if not parsed.get("success"):
+        raise FigmaMCPError(f"Figma Console MCP could not read the board: {parsed}")
+    return parsed["data"]
+
+
 async def auto_arrange(sess: ClientSession, node_ids: list[str], mode: str = "grid", gap: float = 24) -> dict[str, Any]:
     result = await sess.call_tool(
         "figjam_auto_arrange",
