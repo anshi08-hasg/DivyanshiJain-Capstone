@@ -17,7 +17,22 @@ from flask import Flask, Response
 
 app = Flask(__name__, static_folder=".", static_url_path="")
 
-BACKEND_URL = os.environ.get("BACKEND_URL", "").strip().rstrip("/")
+
+def _normalize_backend_url(raw: str) -> str:
+    """A bare host (no scheme) like 'my-app.up.railway.app' is not an
+    absolute URL - a browser resolves it as a relative path instead of a
+    cross-origin target, which silently sends API calls to the frontend's
+    own (API-less) origin. Confirmed live: this exact mistake produced
+    'Unexpected token <, "<!doctype "... is not valid JSON', because the
+    request hit this frontend's own 404 HTML page instead of the backend.
+    Defaults a missing scheme to https:// rather than failing outright."""
+    value = raw.strip().rstrip("/")
+    if value and not value.startswith(("http://", "https://")):
+        value = f"https://{value}"
+    return value
+
+
+BACKEND_URL = _normalize_backend_url(os.environ.get("BACKEND_URL", ""))
 
 
 @app.get("/")
