@@ -599,3 +599,154 @@ machine) was verified live.
 - **Not tested:** real Gemini reasoning over real board content end to end
   (the deployed/local `.env` currently has `LLM_PROVIDER=mock`); only the
   mock-provider path was verified against real board data this session.
+
+## figmaconnecttry branch — Frontend polish: formatted reports, FigJam CTA highlighting
+
+### What shipped
+- Replaced the Pattern Analyzer's raw-markdown report display (a `<pre>`
+  block showing literal `#`/`**`/`- ` characters, which read as source code
+  rather than a finished report) with a hand-written `renderMarkdown()` in
+  `app.js` that turns headings, bold labels, and flat/nested evidence
+  bullets into real `<h2>/<h3>/<h4>/<ul>/<li>/<strong>/<em>` elements,
+  styled with new prose typography in `style.css` (`.report-output`). The
+  original markdown string is preserved separately for the "Download as
+  .md" button, since `.innerHTML` no longer round-trips to the source text.
+- Removed the red "Experimental branch..." banner paragraph from
+  `figjam.html`, replaced with a calm `.pill`-based status indicator
+  (`#board-status-pill`, generalized from the Pattern Analyzer's existing
+  provider pill) that shows "Demo board" vs "Live FigJam board" once
+  connected, instead of an alarming full-width warning box.
+- Gave "Generate pairing code" and "Push to FigJam" a new `.btn-featured`
+  style (solid accent fill, soft halo shadow) so the two actions that
+  actually move the pipeline forward are visually distinct from secondary
+  actions.
+
+### What broke / what changed
+- Nothing broke; this was presentation-only on top of already-tested
+  endpoints. Re-ran the full backend test suite after the change (see test
+  evidence) to confirm no regressions, since none were expected from a
+  frontend-only change.
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 12/12 passing, unchanged.
+- Extracted `renderMarkdown`/`escapeHtml` from `app.js` via Node and ran
+  them against a realistic `build_report()`-shaped sample: headings,
+  bold labels, and nested evidence bullets all mapped to the correct
+  HTML tags with the `nested` class applied only to indented bullets.
+- Started the Flask server locally and confirmed via `curl` that the
+  served `figjam.html` no longer contains `experiment-banner`, both CTA
+  buttons carry `btn-featured`, and the served `app.js` contains
+  `renderMarkdown`.
+
+## figmaconnecttry branch — Fixed a cloud-mode pairing dead end
+
+### What shipped
+- Found and fixed a real UX dead end reported live by the user: in cloud
+  mode, reading the live board requires the Desktop Bridge plugin to
+  already be paired to the cloud relay, but the "Generate pairing code"
+  button lived inside the results section (`#pair-figjam-box`), which only
+  becomes visible after a successful connect + analyze. A first-time user
+  in cloud mode had no way to ever generate a pairing code, since the
+  button needed for pairing was gated behind the very connection pairing
+  was supposed to unlock. Moved the pairing box into the connect section,
+  directly above "Connect / Select FigJam", so it's the natural first step.
+
+### What broke / what changed
+- Root-caused a follow-up deploy issue reported by the user (same red error
+  box, no pairing box visible even after the fix was pushed): compared the
+  `Last-Modified` header of the deployed `figjam.html` against the pushed
+  commit's timestamp and found the served file predated the push by ~20
+  minutes, meaning the frontend Railway service had rebuilt but from a
+  stale commit, not a caching issue. User confirmed and fixed the
+  service's Source branch setting in the Railway dashboard; re-checked
+  `Last-Modified` afterward and it matched the push exactly.
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 12/12 passing (frontend-only
+  change).
+- `curl` against the live Railway deployment before and after the branch
+  fix: `pair-figjam-box` moved from after `connect-btn` in the DOM to
+  before it, confirmed via line-number `grep` on the served HTML both
+  times.
+
+## figmaconnecttry branch — Grounded FigJam analysis in real board data, not model self-report
+
+### What shipped
+- User reported (with screenshots) that after connecting a real FigJam
+  board full of primary research (music/DJ-control interview stickies,
+  participants P1-P6), the app's Themes/Insights panel showed content
+  about "noise during exam periods" and "accessible entrance" instead -
+  unrelated to the connected board. Investigated per the user's own
+  A-F checklist (how FigJam data is retrieved, what's actually retrieved,
+  how it's converted to research items, where the analysis prompt is
+  built, whether mock data mixes with real data, where themes/insights are
+  generated) before changing anything.
+- **Found and fixed a real extraction bug** (not a prompt/hallucination
+  issue): connected live to the user's actual board and found every
+  item's `metadata.participant` was empty, even though the sticky notes
+  clearly read "Participant P1 - Aditi...". `_PARTICIPANT_PATTERN` in
+  `adapter.py` only matched a terse leading `P1:`/`[P1]` tag, not the full
+  "Participant P1 - Name" header format the real board actually uses.
+  Fixed the regex to recognize both forms.
+- Replaced trust in Gemini's self-reported `strength` field with a new
+  `_evidence_confidence()` in `research_agent.py`, computed entirely in
+  code from the verified evidence count and the number of distinct
+  participants it spans (`strong` needs 3+ items across 2+ participants,
+  `medium` needs 2+ items, `limited` is a single item, `insufficient` is
+  zero) - a model claiming "strong" is not itself evidence of anything.
+  Themes/insights/contradictions with zero verified evidence now surface
+  explicitly as "Insufficient evidence" in the UI instead of a
+  plausible-looking but unsupported label.
+- Added a "FigJam data received" debug panel to `figjam.html`/`figjam.js`
+  (collapsible, under the overview) listing every retrieved item's id,
+  type, section, participant, and original text verbatim, so the actual
+  board content can be diff'd against what the AI analyzed, per the
+  user's explicit ask for an extraction-debugging view.
+- Evidence chips (`evidenceChips()` in `figjam.js`) now show the
+  participant id and the original quote (as a hover tooltip) instead of a
+  bare node id, using the full item list the connect endpoint was already
+  returning but the frontend was previously discarding.
+- Strengthened `ANALYZE_SYSTEM_PROMPT` to explicitly forbid drawing on
+  general UX knowledge or "what a typical study on this topic would say"
+  in place of the given material, and to omit a theme/insight entirely
+  rather than fill a gap with a plausible-sounding unsupported claim.
+
+### What broke / what changed
+- While testing the fix live, confirmed the existing evidence-verification
+  layer already does the hard part correctly: with the local mock LLM
+  provider (unrelated to this fix, `LLM_PROVIDER=mock` in this machine's
+  `.env`) returning its fixed canned "library noise" response against the
+  real music-research board, every cited evidence id failed verification
+  (they don't exist among the real board's actual Figma node ids) and the
+  new confidence computation correctly marked everything `insufficient`
+  rather than displaying it as grounded. This confirmed the validation
+  layer the user asked for was already implemented and working; the actual
+  defect was upstream, in extraction (the participant regex), not in
+  prompt-time hallucination protection.
+- Did not implement the full 10-stage extract/normalize/cluster/validate
+  prompt pipeline requested; the existing 2-stage design (Pattern Finder +
+  Research Critic) plus code-side evidence verification already enforces
+  the same non-negotiable (nothing shown without a real, existing item id
+  behind it) without multiplying LLM calls/cost. Flagged to the user as a
+  deliberate scope decision, not an oversight.
+
+### Test evidence
+- Added `test_map_board_data_extracts_participant_from_full_header_line`
+  confirming both the terse (`P1: ...`, `[P2] ...`) and full
+  ("Participant P1 - Name") formats now extract correctly.
+- Added `test_evidence_confidence_reflects_count_and_participant_diversity`
+  covering all four confidence tiers and confirming participant coverage
+  counts distinct participants, not one per evidence item.
+- `python webapp/backend/test_figjam.py`: 14/14 passing.
+- **Live, against the user's real connected board:** `POST
+  /api/figjam/connect` returned `is_demo: false` and, after the regex fix,
+  correct `{"participant": "P1"}` through `"P5"` metadata for the real
+  interview stickies (previously all empty). Ran `/api/figjam/analyze`
+  against this real data with the mock provider and confirmed every
+  resulting theme/insight showed `confidence: "insufficient"` with empty
+  evidence, correctly rejecting the mock's out-of-topic canned claims
+  rather than displaying them.
+- **Not tested:** real Gemini reasoning end to end against this real board
+  (same `LLM_PROVIDER=mock` local-environment limitation as the prior
+  commit); only the mock-provider path plus the evidence-verification/
+  confidence logic around it was exercised against real board data.
