@@ -318,3 +318,133 @@ machine) was verified live.
   app:app`) was verified locally, and only the HTTPS/Cloud Mode transport
   (which is what Railway would actually need) was verified live - not the
   Railway build/deploy process itself.
+
+## figmaconnecttry branch — Real Railway deployment fixes (from actual deploy attempts)
+
+**Date:** 18 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Fixed `webapp/backend/app.py`'s `if __name__ == "__main__"` block to bind
+  `0.0.0.0` and read `$PORT` (was hardcoded `127.0.0.1:5000`), with debug
+  mode only on via an explicit `FLASK_DEBUG` env var (was always `True`).
+- Moved `webapp/frontend/` to `webapp/backend/frontend/` (`git mv`) and
+  changed `app.py`'s `static_folder` from `"../frontend"` to `"frontend"`,
+  so the whole app is self-contained under the directory Railway's Root
+  Directory setting actually deploys, instead of depending on a sibling
+  directory outside it.
+- Updated `FIGMA_CONNECT.md` (new subsection under section 8) documenting
+  three real deployment failures hit on actual Railway infrastructure and
+  their fixes, in detail, since none of these could have been predicted or
+  caught without a live deploy attempt.
+
+### What broke / what changed (this is the whole point of this entry)
+- **First deploy attempt failed at build time.** Railway's actual build logs
+  (user-provided) showed its builder ("Railpack", not Nixpacks as assumed
+  when `nixpacks.toml` was written) could only see `BUILD_LOG.md` and
+  `DivyanshiJain_capstone_plan.md` - i.e. it was building from the repo root,
+  not `webapp/backend`, because Root Directory hadn't actually been set in
+  Railway's UI yet (this doc said to set it; it just hadn't been done). Not
+  a code bug - a setup step not yet completed.
+- **Second attempt built and "succeeded" per Railway's UI, but the site
+  returned "Application failed to respond."** User-provided runtime logs
+  showed Flask's own dev server banner (`Debug mode: on`, `Running on
+  http://127.0.0.1:5000`), meaning Railpack ran `python app.py` directly and
+  ignored the `Procfile`'s `waitress-serve` command entirely. Binding to
+  `127.0.0.1` is unreachable from outside the container, which is exactly
+  the symptom seen. This was not something local testing could have caught,
+  since locally the exact `waitress-serve` command was tested directly, not
+  Railway's actual builder-chosen start command.
+- **Third issue: backend responded, but the frontend showed nothing.**
+  Reasoned through this one before waiting for more logs: Root Directory
+  scopes Railway's entire build context to `webapp/backend`, and
+  `webapp/frontend/` was a sibling directory outside it - almost certainly
+  not included in the deployed image at all, even though it exists locally
+  and worked in every local test this session. Fixed by restructuring rather
+  than guessing at Railway-specific config to reach outside the Root
+  Directory.
+
+### Test evidence
+- Re-ran the local server after both `app.py` fixes and the frontend move:
+  `/`, `/app.js`, `/style.css`, `/figjam`, `/figjam.js`, `/api/provider` all
+  returned `200`, confirming the restructure didn't break anything that was
+  working before.
+- Explicitly checked `webapp/README.md` for any hardcoded old frontend path
+  references before considering the doc updates complete - found none.
+- **Not verified:** whether these fixes actually resolve the issue on real
+  Railway infrastructure - no Railway access in this environment. The user
+  needs to redeploy and confirm; recommended they also explicitly override
+  Railway's Start Command to `waitress-serve --host=0.0.0.0 --port=$PORT
+  app:app` rather than relying solely on the `app.py` safety-net fix, since
+  a real production WSGI server is preferable to Flask's dev server even
+  with the binding fix applied.
+
+## figmaconnecttry branch — Two-service Railway deployment (CORS + config.js)
+
+**Date:** 19 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Fixed a real crash: `int(os.environ.get("PORT", 5000))` only falls back to
+  the default when `PORT` is unset, not when it's set but empty; this
+  machine's local `.env` had a leftover `PORT=` from earlier testing and
+  reproduced the exact crash. Fixed to treat both cases the same.
+- Discovered (from the user) that they had split the deployment into two
+  separate Railway services (frontend, backend) on their own, which cannot
+  work with the existing frontend code: `app.js`/`figjam.js` used relative
+  `fetch("/api/...")` calls, which resolve against whichever origin serves
+  the page, so from a separate frontend service they'd hit that service's
+  own (API-less) origin instead of the backend.
+- Built real two-service support rather than just recommending against it:
+  - `webapp/backend/frontend/server.py`: a second, minimal Flask app that
+    serves the static frontend files plus a dynamic `/config.js` route,
+    which injects `window.API_BASE_URL` from that service's own
+    `BACKEND_URL` env var.
+  - `webapp/backend/frontend/Procfile` and `requirements.txt` (much smaller
+    than the backend's - just `flask` + `waitress`, no LLM/MCP deps) for
+    that service.
+  - Added a matching `/config.js` route to the main `app.py` (empty
+    `API_BASE_URL`), so the existing single-service setup is completely
+    unaffected - `apiUrl()` builds the same relative URLs as before when
+    `API_BASE_URL` is empty.
+  - Changed all 9 `fetch("/api/...")` call sites across `app.js` and
+    `figjam.js` to `fetch(apiUrl("/api/..."))`.
+  - Added `flask_cors.CORS` to `app.py`, scoped to `/api/*` only, controlled
+    by a new `FRONTEND_ORIGIN` env var (defaults to `*` if unset).
+  - Documented both deployment options (one service vs. two) in
+    `FIGMA_CONNECT.md` section 8, including exact Root Directory/Build
+    Command/Start Command/env vars for each service in the two-service case.
+
+### What broke / what changed
+- The empty-`PORT` crash was found by simply trying to run the server
+  locally after an unrelated change - not something that needed Railway logs
+  to catch, just running the actual command.
+- The two-service CORS/config.js work exists entirely because the user had
+  already tried the naive two-service split and hit exactly the failure mode
+  predicted (pages rendered, nothing functional) - this wasn't built
+  speculatively, it was built in direct response to a real, already-observed
+  failure.
+
+### Test evidence
+- Ran the real backend (`app.py`, port 5000) and the real frontend server
+  (`server.py`, port 5010, `BACKEND_URL=http://127.0.0.1:5000`) as two
+  separate local processes simultaneously:
+  - `GET http://127.0.0.1:5010/config.js` returned the correctly injected
+    `API_BASE_URL`.
+  - A request to `http://127.0.0.1:5000/api/provider` with `Origin:
+    http://127.0.0.1:5010` returned `200` with `Access-Control-Allow-Origin:
+    http://127.0.0.1:5010` set correctly - the actual header a browser
+    checks before allowing the frontend's JS to read the response.
+  - A full FigJam flow (`connect` then `analyze`) succeeded end to end with
+    that same cross-origin header present on every request.
+- Re-verified the single-service setup (`app.py` alone) still works
+  unaffected: `/config.js` returns an empty `API_BASE_URL`, and `/`,
+  `/app.js`, `/figjam`, `/figjam.js`, `/api/provider` all still return `200`.
+- `python webapp/backend/test_figjam.py`: all 9 checks still passing.
+- **Not tested:** two actual separate Railway services communicating over
+  the real network - only two local processes on different ports, which
+  exercises the identical CORS/config.js code path but isn't a substitute
+  for the real infrastructure. The user still needs to deploy both services
+  and confirm.

@@ -29,7 +29,7 @@ function setStep(n) {
 
 async function loadProvider() {
   try {
-    const res = await fetch("/api/provider");
+    const res = await fetch(apiUrl("/api/provider"));
     const data = await res.json();
     const name = data.provider || "mock";
     providerLabel.textContent = name === "mock" ? "Offline mock" : name[0].toUpperCase() + name.slice(1);
@@ -194,7 +194,7 @@ document.getElementById("run-analysis").addEventListener("click", async () => {
   runButtonSpinner.hidden = false;
 
   try {
-    const res = await fetch("/api/analyze", {
+    const res = await fetch(apiUrl("/api/analyze"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ participants }),
@@ -227,7 +227,7 @@ document.getElementById("finalize").addEventListener("click", async () => {
     single_participant_findings: state.findings,
   };
 
-  const res = await fetch("/api/finalize", {
+  const res = await fetch(apiUrl("/api/finalize"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

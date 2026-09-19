@@ -49,7 +49,7 @@ connectBtn.addEventListener("click", async () => {
   setBusy(connectBtn, true, "Connect / Select FigJam");
 
   try {
-    const res = await fetch("/api/figjam/connect", {
+    const res = await fetch(apiUrl("/api/figjam/connect"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ board_ref: "default" }),
@@ -168,7 +168,7 @@ runAnalysisBtn.addEventListener("click", async () => {
   setBusy(runAnalysisBtn, true, "Analyze with Gemini");
 
   try {
-    const res = await fetch("/api/figjam/analyze", { method: "POST" });
+    const res = await fetch(apiUrl("/api/figjam/analyze"), { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Analysis failed.");
 
@@ -218,7 +218,7 @@ askBtn.addEventListener("click", async () => {
 
   askBtn.disabled = true;
   try {
-    const res = await fetch("/api/figjam/ask", {
+    const res = await fetch(apiUrl("/api/figjam/ask"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question }),
@@ -251,7 +251,7 @@ const pairFigjamBtn = document.getElementById("pair-figjam-btn");
 const pairFigjamResult = document.getElementById("pair-figjam-result");
 const pairFigjamError = document.getElementById("pair-figjam-error");
 
-fetch("/api/figjam/mode")
+fetch(apiUrl("/api/figjam/mode"))
   .then((res) => res.json())
   .then((data) => { pairFigjamBox.hidden = data.mode !== "cloud"; })
   .catch(() => {});
@@ -262,7 +262,7 @@ pairFigjamBtn.addEventListener("click", async () => {
   setBusy(pairFigjamBtn, true, "Generate pairing code");
 
   try {
-    const res = await fetch("/api/figjam/pair", { method: "POST" });
+    const res = await fetch(apiUrl("/api/figjam/pair"), { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Could not generate a pairing code.");
 
@@ -286,7 +286,7 @@ pushFigjamBtn.addEventListener("click", async () => {
   setBusy(pushFigjamBtn, true, "Push to FigJam");
 
   try {
-    const res = await fetch("/api/figjam/push-to-figjam", { method: "POST" });
+    const res = await fetch(apiUrl("/api/figjam/push-to-figjam"), { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Could not push to FigJam.");
 
