@@ -14,6 +14,7 @@ from figjam.figma_layout import build_layout_plan
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "frontend"))
 from server import _normalize_backend_url
+from app import _normalize_origin
 
 
 def test_normalize_typical_board():
@@ -134,6 +135,21 @@ def test_normalize_backend_url_adds_missing_scheme():
     assert _normalize_backend_url("https://my-app.up.railway.app/") == "https://my-app.up.railway.app"
     assert _normalize_backend_url("") == ""
     assert _normalize_backend_url("   ") == ""
+
+
+def test_normalize_origin_adds_missing_scheme():
+    # Confirmed live: the identical mistake as BACKEND_URL above, but for
+    # FRONTEND_ORIGIN/CORS - a schemeless value never matches the Origin
+    # header a real browser sends (always includes the scheme), so
+    # flask-cors silently omits Access-Control-Allow-Origin for every real
+    # request while a request with no Origin header at all (e.g. curl
+    # without -H "Origin: ...") gets the raw misconfigured value reflected,
+    # making the bug look harmless until an actual browser hit it.
+    assert _normalize_origin("my-app.up.railway.app") == "https://my-app.up.railway.app"
+    assert _normalize_origin("https://my-app.up.railway.app") == "https://my-app.up.railway.app"
+    assert _normalize_origin("my-app.up.railway.app/") == "https://my-app.up.railway.app"
+    assert _normalize_origin("*") == "*"
+    assert _normalize_origin("") == ""
 
 
 def _run_all():

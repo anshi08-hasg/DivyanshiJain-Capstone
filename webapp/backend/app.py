@@ -22,13 +22,29 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 app = Flask(__name__, static_folder="frontend", static_url_path="")
 
+def _normalize_origin(raw: str) -> str:
+    """Browsers always send a full scheme (e.g. "https://...") in the Origin
+    header, so a bare hostname here (a Railway-generated domain pasted
+    without its scheme, the same mistake already seen with BACKEND_URL in
+    server.py) never matches, and flask-cors silently omits the CORS header
+    for every real request - confirmed live: FRONTEND_ORIGIN was set to a
+    schemeless host, and curl with the browser's actual Origin value got no
+    Access-Control-Allow-Origin back at all, while a request with no Origin
+    header got the raw schemeless value reflected (a flask-cors edge case
+    that made the misconfiguration look harmless until a real browser hit it)."""
+    value = raw.strip().rstrip("/")
+    if value and value != "*" and not value.startswith(("http://", "https://")):
+        value = f"https://{value}"
+    return value
+
+
 # Only needed if the frontend is deployed as its own separate origin (see
 # webapp/backend/frontend/server.py); harmless no-op in the normal
 # single-service setup, where the frontend is same-origin and doesn't need
 # CORS at all. FRONTEND_ORIGIN should be the frontend service's exact URL in
 # production; "*" is fine for local dev / a low-stakes demo, not for
 # anything handling real user data.
-CORS(app, resources={r"/api/*": {"origins": os.environ.get("FRONTEND_ORIGIN", "*")}})
+CORS(app, resources={r"/api/*": {"origins": _normalize_origin(os.environ.get("FRONTEND_ORIGIN", "*"))}})
 
 # In-memory, single-session state for the experimental FigJam agent (same
 # pattern as the Pattern Analyzer's module-level state: no DB for this MVP).
