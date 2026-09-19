@@ -40,6 +40,22 @@
           <h2>Connect FigJam</h2>
           <p class="panel-sub">Connect your FigJam research board and let the Research Agent analyze it.</p>
         </div>
+
+        <div id="pair-figjam-box" class="finalize-bar" hidden>
+          <p class="panel-sub">
+            <strong>First-time setup:</strong> this deployment reads FigJam through a cloud relay
+            (no local Figma Desktop needed on this server). Pair your Figma Desktop once: generate
+            a code below, then enter it in the Desktop Bridge plugin's Cloud Mode toggle. Pairing
+            persists, so you only need to do this again if the plugin disconnects.
+          </p>
+          <button id="pair-figjam-btn" type="button" class="btn btn-featured">
+            <span class="btn-label">Generate pairing code</span>
+            <span class="spinner" hidden></span>
+          </button>
+          <p id="pair-figjam-result" class="panel-sub" hidden></p>
+          <p id="pair-figjam-error" class="error-banner" hidden></p>
+        </div>
+
         <div class="panel-actions">
           <button id="connect-btn" type="button" class="btn btn-primary">
             <span class="btn-label">Connect / Select FigJam</span>
@@ -97,21 +113,6 @@
           <h3>Design opportunities</h3>
         </div>
         <ul id="opportunities-list" class="plain-list"></ul>
-
-        <div id="pair-figjam-box" class="finalize-bar" hidden>
-          <p class="panel-sub">
-            This deployment connects to FigJam via the cloud relay (no local Figma Desktop
-            needed on this server). Pair your own Figma Desktop once: generate a code below,
-            then enter it in the Desktop Bridge plugin's Cloud Mode toggle. Pairing persists,
-            you shouldn't need to repeat this unless the plugin disconnects.
-          </p>
-          <button id="pair-figjam-btn" type="button" class="btn btn-featured">
-            <span class="btn-label">Generate pairing code</span>
-            <span class="spinner" hidden></span>
-          </button>
-          <p id="pair-figjam-result" class="panel-sub" hidden></p>
-          <p id="pair-figjam-error" class="error-banner" hidden></p>
-        </div>
 
         <div class="finalize-bar">
           <p class="panel-sub">
