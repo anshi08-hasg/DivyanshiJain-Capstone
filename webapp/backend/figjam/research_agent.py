@@ -30,14 +30,14 @@ def _step(label: str) -> dict[str, Any]:
     return {"label": label, "at": time.strftime("%H:%M:%S")}
 
 
-def connect_board(board_ref: str) -> dict[str, Any]:
+async def connect_board(board_ref: str) -> dict[str, Any]:
     """Runs Retrieve + Normalize. Returns {context, activity, is_demo}."""
     activity: list[dict[str, Any]] = []
     adapter = get_adapter()
     is_demo = adapter.__class__.__name__ == "DemoFigJamAdapter"
 
     try:
-        raw = adapter.fetch_board(board_ref)
+        raw = await adapter.fetch_board(board_ref)
     except FigJamUnavailableError as exc:
         raise FigJamAgentError(str(exc)) from exc
 

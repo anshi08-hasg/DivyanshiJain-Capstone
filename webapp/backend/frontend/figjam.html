@@ -25,15 +25,14 @@
           <span class="brand-tagline">FigJam Research Agent (experimental)</span>
         </div>
       </div>
-      <a href="/" class="btn btn-ghost">Pattern Analyzer</a>
+      <div class="header-actions">
+        <a href="/" class="btn btn-ghost">Pattern Analyzer</a>
+        <div class="pill" id="board-status-pill" hidden>
+          <span class="dot"></span>
+          <span id="board-status-label"></span>
+        </div>
+      </div>
     </header>
-
-    <p class="experiment-banner">
-      Experimental branch. No live Figma/FigJam MCP tool is available in this environment yet,
-      so "Connect FigJam" runs the full pipeline against a fixed demo research board instead of
-      a real one. Everything downstream (retrieval, normalization, Gemini analysis, the critic
-      pass, and evidence checks) is real and runs against whatever LLM provider is configured.
-    </p>
 
     <main>
       <section id="connect-section" class="panel">
@@ -106,7 +105,7 @@
             then enter it in the Desktop Bridge plugin's Cloud Mode toggle. Pairing persists,
             you shouldn't need to repeat this unless the plugin disconnects.
           </p>
-          <button id="pair-figjam-btn" type="button" class="btn btn-ghost">
+          <button id="pair-figjam-btn" type="button" class="btn btn-featured">
             <span class="btn-label">Generate pairing code</span>
             <span class="spinner" hidden></span>
           </button>
@@ -121,7 +120,7 @@
             Requires Figma Desktop open with the target board and the Desktop Bridge plugin
             connected. See FIGMA_CONNECT.md.
           </p>
-          <button id="push-figjam-btn" type="button" class="btn btn-secondary">
+          <button id="push-figjam-btn" type="button" class="btn btn-featured">
             <span class="btn-label">Push to FigJam</span>
             <span class="spinner" hidden></span>
           </button>

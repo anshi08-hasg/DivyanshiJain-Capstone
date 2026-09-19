@@ -1,21 +1,28 @@
 """FigJam board retrieval, abstracted behind an adapter interface so the rest
 of the agent never depends on a specific MCP tool being available.
 
-Status at build time: this environment exposes an unauthenticated
-"claude.ai Figma" MCP connector (visible only as a name requiring OAuth in
-the harness's server list) and no callable Figma/FigJam tool of any kind
-(confirmed by searching the available tool catalog). No FigJam-board-reading
-tool exists to call, authorized or not, so MCPFigJamAdapter below is a real
-interface with no working implementation, not a stub pretending to work.
+MCPFigJamAdapter is now a real, live implementation, wired to
+figma_mcp_client (the same client already used for Push to FigJam) via its
+figjam_get_board_contents tool. Confirmed live, using real board content
+created during this build (see BUILD_LOG.md): it correctly returns 0 nodes
+for a genuinely empty page and real node data once something exists.
 
-DemoFigJamAdapter exists only so the rest of the pipeline (normalize,
-analyze, critique, frontend) can be exercised end to end without a live
-connection. Every place its data surfaces in the UI is labeled as demo data.
+Hard constraint confirmed live: figjam_get_board_contents has no board/page
+selector parameter at all - it only ever reads whatever page is currently
+active/focused in Figma Desktop at the moment of the call, not a specific
+board chosen remotely. This is a real limitation of the underlying tool, not
+a shortcut taken here; there is no way to read a board that isn't the one
+the user currently has open and focused.
+
+DemoFigJamAdapter still exists as the fallback when FIGMA_ACCESS_TOKEN isn't
+configured at all, so the pipeline remains exercisable with zero setup.
 """
 
 from __future__ import annotations
 
 import abc
+import os
+import re
 from typing import Any
 
 
@@ -29,43 +36,96 @@ class FigJamAdapter(abc.ABC):
         """Whether this adapter can actually serve board data right now."""
 
     @abc.abstractmethod
-    def fetch_board(self, board_ref: str) -> dict[str, Any]:
+    async def fetch_board(self, board_ref: str) -> dict[str, Any]:
         """Return raw board data: {"board_name": str, "raw_items": [...]}."""
 
 
+def _find_containing_section(sections: list[dict[str, Any]], x: float, y: float) -> str | None:
+    """No parent/child linkage is returned by figjam_get_board_contents (a
+    SECTION node only reports its own childCount, not which nodes are in
+    it), so section membership is inferred geometrically: whichever
+    SECTION's bounding box contains this node's position."""
+    for s in sections:
+        sx, sy = s.get("x", 0), s.get("y", 0)
+        sw, sh = s.get("width", 0), s.get("height", 0)
+        if sx <= x <= sx + sw and sy <= y <= sy + sh:
+            return s.get("name")
+    return None
+
+
+_PARTICIPANT_PATTERN = re.compile(r"^\s*\[?(P\d+)\b", re.IGNORECASE)
+
+
+def _map_board_data_to_raw_items(board_data: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes = board_data.get("nodes", [])
+    sections = [n for n in nodes if n.get("type") == "SECTION"]
+
+    raw_items: list[dict[str, Any]] = []
+    for node in nodes:
+        node_type = node.get("type")
+        node_id = str(node.get("id"))
+
+        if node_type == "SECTION":
+            name = node.get("name", "")
+            raw_items.append({"id": node_id, "type": "section", "content": name, "section": name})
+            continue
+
+        x, y = node.get("x", 0), node.get("y", 0)
+        text = node.get("text") or node.get("name") or ""
+        section_name = _find_containing_section(sections, x, y)
+
+        metadata: dict[str, Any] = {}
+        match = _PARTICIPANT_PATTERN.match(text)
+        if match:
+            metadata["participant"] = match.group(1).upper()
+
+        item_type = {"STICKY": "sticky", "TEXT": "text"}.get(node_type, "unknown")
+        raw_items.append({
+            "id": node_id,
+            "type": item_type,
+            "content": text,
+            "section": section_name,
+            "position": {"x": x, "y": y},
+            "metadata": metadata,
+        })
+
+    return raw_items
+
+
 class MCPFigJamAdapter(FigJamAdapter):
-    """Intended integration point for the official Figma MCP server.
-
-    Once a Figma/FigJam MCP tool is authorized and exposed to this agent
-    (e.g. a tool that reads FigJam node content: sticky notes, text, sections,
-    groups, and their metadata), this method should call it and map its
-    response into the raw_items shape DemoFigJamAdapter already produces
-    below, then hand off to figjam.normalize.normalize_board() unchanged.
-
-    Not implemented: no such tool is currently available to call.
-    """
+    """Reads the currently active FigJam page in Figma Desktop, live, via
+    figma_mcp_client (the same MCP client Push to FigJam uses)."""
 
     def is_available(self) -> bool:
-        return False
+        return bool(os.environ.get("FIGMA_ACCESS_TOKEN", "").strip())
 
-    def fetch_board(self, board_ref: str) -> dict[str, Any]:
-        raise FigJamUnavailableError(
-            "No Figma/FigJam MCP tool is available in this environment. "
-            "The 'claude.ai Figma' connector requires authorization (see your "
-            "claude.ai connector settings), and even once authorized it is not "
-            "confirmed to expose FigJam board/sticky-note content specifically. "
-            "Connect using the demo board instead, or wire a real MCP tool into "
-            "MCPFigJamAdapter.fetch_board() once one is available."
-        )
+    async def fetch_board(self, board_ref: str) -> dict[str, Any]:
+        from . import figma_mcp_client as mcp_client
+
+        try:
+            async with mcp_client.session() as sess:
+                board_data = await mcp_client.get_board_contents(sess)
+        except mcp_client.FigmaMCPError as exc:
+            raise FigJamUnavailableError(
+                f"Could not read the live FigJam board ({exc}). Make sure Figma Desktop is "
+                "open with the target board as the active/focused page, and the Desktop "
+                "Bridge plugin is connected (local mode: launched; cloud mode: paired via "
+                "POST /api/figjam/pair)."
+            ) from exc
+
+        page = board_data.get("page", "the current page")
+        raw_items = _map_board_data_to_raw_items(board_data)
+        return {"board_name": f"Live FigJam board: {page}", "raw_items": raw_items}
 
 
 class DemoFigJamAdapter(FigJamAdapter):
-    """Fixed sample research board, clearly not live FigJam data."""
+    """Fixed sample research board, clearly not live FigJam data. Used only
+    when FIGMA_ACCESS_TOKEN isn't configured at all."""
 
     def is_available(self) -> bool:
         return True
 
-    def fetch_board(self, board_ref: str) -> dict[str, Any]:
+    async def fetch_board(self, board_ref: str) -> dict[str, Any]:
         return {"board_name": "Demo board: Library redesign research (sample data, not live FigJam)", "raw_items": _DEMO_ITEMS}
 
 
@@ -92,12 +152,9 @@ _DEMO_ITEMS: list[dict[str, Any]] = [
 
 
 def get_adapter() -> FigJamAdapter:
-    """Always returns DemoFigJamAdapter for now.
-
-    Kept as a factory (rather than importing DemoFigJamAdapter directly
-    elsewhere) so swapping in MCPFigJamAdapter once a real tool exists is a
-    one-line change here, not a change everywhere it's used.
-    """
+    """Prefers the real, live MCPFigJamAdapter whenever FIGMA_ACCESS_TOKEN is
+    configured; falls back to DemoFigJamAdapter only when it isn't, so the
+    pipeline still works with zero setup."""
     mcp_adapter = MCPFigJamAdapter()
     if mcp_adapter.is_available():
         return mcp_adapter

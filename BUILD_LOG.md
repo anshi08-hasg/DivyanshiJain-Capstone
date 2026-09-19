@@ -448,3 +448,154 @@ machine) was verified live.
   exercises the identical CORS/config.js code path but isn't a substitute
   for the real infrastructure. The user still needs to deploy both services
   and confirm.
+
+## figmaconnecttry branch — Real two-service Railway deployment debugging
+
+**Date:** 19 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Fixed a second instance of the missing-scheme bug: `FRONTEND_ORIGIN` (used
+  to configure CORS on the backend) was set to a bare Railway hostname, same
+  mistake as the earlier `BACKEND_URL` bug. Added `_normalize_origin()` in
+  `app.py`, mirroring `server.py`'s `_normalize_backend_url()`, so a missing
+  `https://` is auto-added before being passed to `flask_cors.CORS()`.
+- Added copy-to-clipboard for FigJam pairing codes: auto-copies as soon as
+  the code is generated, plus a manual "Copy" button that shows "Copy
+  failed, select manually" if clipboard access is blocked, so the failure
+  is visible rather than silent.
+- Added 2 new tests (`test_normalize_origin_adds_missing_scheme`,
+  building on the existing `test_normalize_backend_url_adds_missing_scheme`
+  pattern) - 11 checks total now, all passing.
+
+### What broke / what changed (all found on real Railway infrastructure, none of it reproducible locally beforehand)
+- **Both services individually looked "successfully deployed" while being
+  completely unreachable.** Root cause, found from actual deploy + HTTP
+  network logs the user pulled: each service's **Public Networking target
+  port** didn't match the port the container actually listened on. The
+  frontend needed `8080` (Railway's own default `$PORT`, confirmed from its
+  deploy log: `Serving on http://0.0.0.0:8080`); the backend's domain was
+  still configured for `5000` (a leftover from local-dev assumptions) while
+  its container also listened on `8080`. Every request hit Railway's edge
+  proxy, which had nothing to route to, and returned a fast, uniform `502`
+  on every single path (including plain `GET /`) - a pattern that, in
+  hindsight, is the signature of a routing/port mismatch rather than an
+  app-level crash (a real crash would vary in latency and, in this app's
+  case, only affect specific broken code paths, not literally every route
+  including static assets that had never changed).
+- Confirmed Railpack *can* pick up `Procfile` correctly (contradicting an
+  earlier build attempt) - once Root Directory was actually set correctly,
+  the build log explicitly showed `Found web command in Procfile` and
+  `Deploy: waitress-serve --host=0.0.0.0 --port=$PORT app:app`, and the
+  container logs confirmed `waitress` really was serving, not Flask's dev
+  server. The earlier "ran `python app.py` directly" failure mode from a
+  previous session was most likely caused by the Root Directory
+  misconfiguration at the time, not a fundamental Railpack/Procfile
+  incompatibility as originally assumed and documented.
+- **The "Pair with FigJam" box was invisible on the deployed frontend even
+  after both services were reachable and the copy button had shipped.**
+  Root-caused by directly curling the backend's `/api/figjam/mode` endpoint
+  with the exact `Origin` header a real browser sends: it returned `200`
+  with the correct body, but with no `Access-Control-Allow-Origin` header
+  at all. A second curl with no `Origin` header at all returned the raw,
+  schemeless `FRONTEND_ORIGIN` value reflected directly, which is what
+  revealed the actual misconfigured value without needing dashboard access.
+  This confirms the earlier `BACKEND_URL` scheme bug was not a one-off typo
+  but a pattern this Railway setup makes easy to hit (its UI shows generated
+  domains without their scheme, inviting exactly this mistake), which is why
+  both instances got a defensive code fix rather than only a "fix your env
+  var" instruction.
+
+### Test evidence
+- User confirmed live: the full Pattern Analyzer flow (Run Pattern Analysis,
+  Finalize approved output) works end to end on the deployed two-service
+  setup after the port fixes.
+- User confirmed live: a real FigJam Desktop Bridge plugin pairing,
+  including generating a fresh code via the deployed backend's
+  `/api/figjam/pair` and seeing prior real pushed content
+  (Themes/Insights/Contradictions/Research Gaps/Design Opportunities
+  sections) already present on their actual FigJam board from earlier
+  sessions.
+- Verified live, directly against the deployed backend: `curl` with the
+  exact browser-sent `Origin` header got no CORS header (confirming the
+  bug); `curl` with no `Origin` header reflected the raw misconfigured
+  value (revealing what it actually was set to); after the code fix,
+  reproduced the identical scenario locally with `FRONTEND_ORIGIN` set to
+  that exact schemeless value and confirmed `Access-Control-Allow-Origin`
+  now correctly includes the scheme.
+- `python webapp/backend/test_figjam.py`: 11 checks, all passing.
+- **Not yet confirmed:** whether the `FRONTEND_ORIGIN` fix resolves the
+  pairing box's visibility on the actual deployed frontend - fixed and
+  verified against the exact real-world value, but the user still needs to
+  wait for the backend to redeploy and check the live page.
+
+## figmaconnecttry branch — Real FigJam board reading (replaces demo-only "Connect FigJam")
+
+**Date:** 19 September 2026
+**Time spent:** Not tracked precisely this session.
+**Approx. tokens used:** Exact token usage unavailable in session.
+
+### What shipped
+- Implemented `MCPFigJamAdapter.fetch_board()` for real, using the same
+  `figma_mcp_client` session already built for Push to FigJam. Added
+  `get_board_contents()` to `figma_mcp_client.py` (calls
+  `figjam_get_board_contents`) and `_map_board_data_to_raw_items()` /
+  `_find_containing_section()` to `adapter.py`, mapping real Figma node data
+  into the existing evidence schema.
+- `MCPFigJamAdapter.is_available()` now reflects whether `FIGMA_ACCESS_TOKEN`
+  is configured (previously always `False`); `get_adapter()` already
+  preferred it automatically once available, so no dispatch logic needed to
+  change, only the adapter's own honesty about its capability.
+- Made `connect_board()`, `FigJamAdapter.fetch_board()`, and
+  `/api/figjam/connect` async throughout, since the real read path needs the
+  same `asyncio`/MCP session machinery as the write path.
+- Updated the frontend's experimental banner and connect handler to state
+  whether the connected board is real or demo, based on the actual
+  `is_demo` flag, instead of a fixed "always demo" claim.
+- Added 2 new tests replacing the now-outdated
+  `test_mcp_adapter_is_honest_about_being_unavailable` (which asserted
+  permanent unavailability, no longer true): one confirming
+  `is_available()` tracks the token, one confirming the geometric
+  section/participant-inference mapping against real-shaped node data.
+
+### What broke / what changed
+- Discovered live that `figjam_get_board_contents` has no board/page
+  selector parameter at all - it always reads whichever page is currently
+  active/focused in Figma Desktop. First attempt against a board that
+  looked populated on screen returned `0` nodes; root-caused (with the
+  user's help confirming what was actually focused) to a different
+  page/file being focused at that moment, not a bug in the read call.
+- To get the real response shape rather than guess from documentation,
+  created a real sticky and a real section on the user's live board via the
+  already-working write path, then read them back immediately - this
+  revealed the real shape (`{id, type, name, x, y, width, height, text?,
+  color?, childCount?}`) and, critically, that there is **no parent/child
+  linkage** returned for section membership (a `SECTION` node only reports
+  its own `childCount`), which is why section assignment had to be inferred
+  geometrically (bounding-box containment) instead of read directly.
+- Fixed 3 tests broken by making `fetch_board`/`connect_board` async
+  (`coroutine was never awaited` / `'coroutine' object is not subscriptable`
+  errors) and by `MCPFigJamAdapter.is_available()` no longer always
+  returning `False` - `test_connect_board_demo_succeeds` now explicitly
+  forces the demo path via monkeypatching, since it would otherwise be
+  affected by whatever `FIGMA_ACCESS_TOKEN` happens to be in the test
+  process's environment (which is loaded from the real `.env` as a side
+  effect of `test_figjam.py` importing `app.py` for an unrelated test).
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 12 checks, all passing.
+- **Live, end to end, through the real Flask route:** `POST
+  /api/figjam/connect` returned `is_demo: false`, a real board name ("Live
+  FigJam board: Page 1"), and the exact 2 real items that existed on the
+  board at that moment, with correct type/section/id mapping.
+- Ran `/api/figjam/analyze` against this real data immediately afterward:
+  the mock LLM provider's canned response cited evidence ids from the old
+  demo dataset that don't exist among the real board's actual item ids, and
+  the existing evidence-verification code correctly caught this and marked
+  every theme/insight/contradiction `unsupported: true` - confirming the
+  evidence-integrity check works correctly against genuinely real input,
+  not just the fixture data it was originally tested against.
+- **Not tested:** real Gemini reasoning over real board content end to end
+  (the deployed/local `.env` currently has `LLM_PROVIDER=mock`); only the
+  mock-provider path was verified against real board data this session.

@@ -69,6 +69,15 @@ connectBtn.addEventListener("click", async () => {
     overviewSection.hidden = false;
     activitySection.hidden = false;
     renderActivity(data.activity);
+
+    const statusPill = document.getElementById("board-status-pill");
+    const statusLabel = document.getElementById("board-status-label");
+    if (statusPill && statusLabel) {
+      statusPill.classList.toggle("is-demo", data.is_demo);
+      statusPill.classList.toggle("is-live", !data.is_demo);
+      statusLabel.textContent = data.is_demo ? "Demo board" : "Live FigJam board";
+      statusPill.hidden = false;
+    }
   } catch (err) {
     connectError.textContent = err.message;
     connectError.hidden = false;

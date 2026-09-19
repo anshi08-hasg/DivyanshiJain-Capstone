@@ -15,53 +15,64 @@ introducing a new stack.
 
 ## 2. Honesty about the MCP integration: what actually works
 
-**No live Figma/FigJam MCP tool is available in this environment.** Before
-writing any code, the available tool catalog was searched for Figma/FigJam
-tooling. The only related entry found was an unauthenticated `claude.ai
-Figma` connector, listed as requiring OAuth before any of its tools become
-visible. No callable tool (authorized or not) exists to read FigJam board
-content (sticky notes, sections, groups) in this session.
+**Update:** this section originally said no live Figma/FigJam MCP tool was
+available at all. That was true at the time (only an unauthenticated
+`claude.ai Figma` connector existed, exposing no callable tool). It stopped
+being true once the community **Figma Console MCP** server was found and
+wired up for Push to FigJam (section 7) - the exact same MCP client now
+also powers real board *reading*, described below. The section is kept as a
+record of that honest starting point, corrected rather than deleted.
 
-Because this session is non-interactive, the OAuth flow for that connector
-cannot be run here even if it were the right tool for the job. It's also not
-confirmed that connector exposes FigJam-specific node content (sticky
-notes, sections) versus general Figma design-file access, since its tool
-schema was never loaded.
+**Board reading is now real, live, via `MCPFigJamAdapter`** (`figjam/adapter.py`),
+using the same `figma_mcp_client` session and transport (Local or Cloud
+Mode) already used for writing. `get_adapter()` prefers it automatically
+whenever `FIGMA_ACCESS_TOKEN` is configured, falling back to
+`DemoFigJamAdapter`'s fixed sample board only when it isn't - so the demo
+board is now purely a zero-setup fallback, not the only option.
 
-**What this means concretely:**
-- `figjam/adapter.py` defines a real `FigJamAdapter` interface and a
-  `MCPFigJamAdapter` implementation. `MCPFigJamAdapter.is_available()`
-  returns `False`, and calling `fetch_board()` raises a `FigJamUnavailableError`
-  with the explanation above; it is a real, empty-handed interface, not a
-  fake success path.
-- A `DemoFigJamAdapter` provides a fixed sample research board (15 items
-  across 3 sections: Study Space, Wayfinding, Booking & Group Rooms) so the
-  rest of the pipeline, retrieval through normalization, Gemini analysis,
-  the critic pass, evidence verification, and the frontend, can be
-  exercised end to end. Every place demo data surfaces in the UI is labeled
-  as demo data (the connect banner, the board name itself).
-- `get_adapter()` in `adapter.py` is the single place to swap in a real MCP
-  tool later: once one is authorized and exposed, implement its call inside
-  `MCPFigJamAdapter.fetch_board()`, mapping its response into the same
-  `{"board_name": str, "raw_items": [...]}` shape `DemoFigJamAdapter`
-  already produces, and `get_adapter()` will prefer it automatically
-  (it checks `mcp_adapter.is_available()` first).
+**The hard constraint, confirmed live:** `figjam_get_board_contents` (the
+tool this reads through) has no board or page selector parameter at all. It
+always reads whichever page is currently active/focused in Figma Desktop at
+the exact moment of the call - there is no way to specify "read board X"
+remotely. This was confirmed by testing against a board that looked
+populated on screen but returned 0 nodes (a different page/file was
+actually focused at that moment), then confirmed working correctly by
+creating a real sticky and section and reading them back immediately
+afterward, live.
 
-**Gemini reasoning is real, not simulated.** The two-stage Gemini pipeline
-(Pattern Finder, then Research Critic) is fully implemented against the
-project's existing pluggable `llm_providers.py` (Anthropic / OpenAI / Gemini
-/ offline mock). It was verified with a real Gemini API call during this
-build (see "What was tested" below) before the free-tier daily quota ran out
-from testing. It is the FigJam *board retrieval* that is simulated via demo
-data, not the AI reasoning on top of it.
+**Mapping real Figma nodes into the evidence schema (`_map_board_data_to_raw_items`
+in `adapter.py`):**
+- `SECTION` nodes become `type: "section"` items directly.
+- `STICKY`/`TEXT` nodes become `type: "sticky"`/`"text"` items; any other
+  node type (`SHAPE_WITH_TEXT`, `CONNECTOR`, `TABLE`, `CODE_BLOCK`, `FRAME`)
+  falls back to `"unknown"` rather than being dropped or guessed at.
+- **Section membership is inferred geometrically**, not from the API: the
+  real tool's node list has no parent/child linkage (a `SECTION` only
+  reports its own `childCount`, not which nodes are inside it) - confirmed
+  live by creating a sticky and a section and reading the flat list back.
+  Each non-section node is assigned to whichever `SECTION`'s bounding box
+  contains its `(x, y)` position, or `None` if it's inside no section.
+- **Participant IDs are inferred from a `P\d+` prefix in the sticky/text**
+  (e.g. `"P1: too loud"`), matching the same convention already used
+  elsewhere in this project (the Pattern Analyzer's paste-in format). Items
+  without that prefix simply have no `participant` in their metadata, which
+  is honest, not a guess.
+
+**Gemini reasoning is real, not simulated**, independent of whether the
+board itself is real or demo. The two-stage Gemini pipeline (Pattern
+Finder, then Research Critic) is fully implemented against the project's
+existing pluggable `llm_providers.py` (Anthropic / OpenAI / Gemini / offline
+mock). It was verified with a real Gemini API call during an earlier part
+of this build (see "What was tested" below) before the free-tier daily
+quota ran out from testing.
 
 ## 3. Architecture
 
 ```mermaid
 flowchart LR
-    A[FigJam Board] -->|read: not available yet| B[Figma MCP]
-    A2[Demo board: fixed sample data] --> C[Research Data Layer]
-    B -.->|planned, not implemented| C
+    A[Your FigJam Board:<br/>currently active page] -->|figjam_get_board_contents| B[Figma Console MCP client]
+    A2[Demo board: fixed sample data<br/>only if no FIGMA_ACCESS_TOKEN] --> C[Research Data Layer]
+    B -->|geometric section mapping| C
     C --> D[Research Agent]
     D --> E[Gemini: Pattern Finder]
     E --> F[Gemini: Research Critic]
@@ -71,6 +82,7 @@ flowchart LR
     H -->|Push to FigJam| I[Figma Layout Builder]
     I --> J[Figma Console MCP client]
     J -->|requires live Desktop Bridge plugin| K[Your FigJam Board]
+    B -.->|same MCP client and plugin connection| J
 ```
 
 Code = deterministic data operations: retrieving raw items, normalizing them
@@ -553,12 +565,26 @@ board and the Desktop Bridge plugin running before clicking the button.
 
 ## 10. What was tested
 
-- `python webapp/backend/test_figjam.py`: 7 checks, all passing. Covers
+- `python webapp/backend/test_figjam.py`: 12 checks, all passing. Covers
   normalization of a typical board, an unsupported FigJam node type falling
   back to `"unknown"` instead of crashing, an empty board being rejected,
-  the demo adapter connecting successfully, `MCPFigJamAdapter` failing
-  honestly with a clear message, malformed/fenced JSON parsing, and evidence
+  the demo adapter connecting successfully, `MCPFigJamAdapter.is_available()`
+  reflecting `FIGMA_ACCESS_TOKEN`, geometric section/participant inference
+  from real-shaped node data, malformed/fenced JSON parsing, and evidence
   verification dropping invented ids.
+- **Real board reading, live, end to end:** created a real sticky and a real
+  section on an actual FigJam board via the existing write path, then
+  immediately read them back through `figjam_get_board_contents` and
+  confirmed the exact real response shape (`{id, type, name, x, y, width,
+  height, text?, color?, childCount?}`) before writing the mapping code
+  against it, rather than guessing the shape from documentation. Ran the
+  full `connect_board()` -> `/api/figjam/connect` -> `/api/figjam/analyze`
+  chain through the actual Flask route afterward and confirmed `is_demo:
+  false`, the real item count, and correct section/id data in the response.
+- Confirmed the "no board/page selector" constraint directly: a board that
+  looked populated on screen returned `0` nodes because a different page was
+  actually focused at that moment, then confirmed reading works correctly
+  immediately after switching focus and creating fresh content.
 - Ran the pipeline directly against a live Gemini call (bypassing Flask) during
   this build: connect succeeded; the analyze call hit a real `429
   ResourceExhausted` (free-tier daily quota of 20 requests, already spent on
@@ -576,7 +602,8 @@ board and the Desktop Bridge plugin running before clicking the button.
 
 ## 11. What currently works
 
-- Retrieve (demo data) -> normalize -> analyze -> critique -> evidence
+- Retrieve (**real, live FigJam data** when `FIGMA_ACCESS_TOKEN` is set;
+  demo data otherwise) -> normalize -> analyze -> critique -> evidence
   verification -> structured frontend display -> grounded Q&A, end to end.
 - Evidence is real and traceable: every displayed theme/insight/contradiction
   shows the exact demo-board item ids backing it, and unsupported claims are
@@ -589,10 +616,23 @@ board and the Desktop Bridge plugin running before clicking the button.
 
 ## 12. What does not work / limitations
 
-- **No real FigJam board can be connected.** Every "Connect FigJam" click
-  loads the same fixed demo board. This is the single biggest gap and is
-  documented, not hidden, in the UI banner and the connect response
-  (`is_demo: true`).
+- ~~No real FigJam board can be connected~~ **Resolved:** `MCPFigJamAdapter`
+  now reads the real, currently active FigJam page live (section 2), used
+  automatically whenever `FIGMA_ACCESS_TOKEN` is set. The demo board is now
+  only a zero-setup fallback, not the only option.
+- **"Connect FigJam" always reads whichever page is currently active/focused
+  in Figma Desktop** - confirmed live, `figjam_get_board_contents` has no
+  board/page selector parameter at all. There is no way to remotely choose
+  "board X" without the user having it open and focused at click time.
+- **Section membership for real boards is inferred geometrically** (bounding
+  box containment), since the underlying tool returns a flat node list with
+  no parent/child linkage. A sticky placed outside every section's bounds
+  correctly gets no section, but a sticky placed inside the wrong section's
+  bounds (e.g. overlapping two sections) would be assigned to whichever one
+  is checked first - not something exercised by the live test performed.
+- **Participant IDs on real boards depend on a `P\d+` prefix convention** in
+  the sticky/text content; boards that don't follow it will show
+  `participants: null` in the overview rather than a guessed count.
 - The Gemini free-tier API key used during this build hit its daily request
   quota (20/day) partway through testing, so live (non-mock) verification of
   `/api/figjam/analyze` and `/api/figjam/ask` end-to-end over HTTP could not

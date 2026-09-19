@@ -4,10 +4,11 @@ task spec: normalization, empty research, malformed responses, evidence
 mapping, adapter/agent failure handling, and FigJam layout-plan building.
 """
 
+import asyncio
 import os
 import sys
 
-from figjam.adapter import DemoFigJamAdapter, MCPFigJamAdapter, FigJamUnavailableError
+from figjam.adapter import MCPFigJamAdapter, _map_board_data_to_raw_items
 from figjam.normalize import normalize_board
 from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidence, connect_board
 from figjam.figma_layout import build_layout_plan
@@ -49,32 +50,62 @@ def test_connect_board_rejects_empty_board(monkeypatch):
     import figjam.research_agent as agent_module
 
     class EmptyAdapter:
-        def fetch_board(self, board_ref):
+        async def fetch_board(self, board_ref):
             return {"board_name": "Empty", "raw_items": []}
 
     monkeypatch.setattr(agent_module, "get_adapter", lambda: EmptyAdapter())
     try:
-        connect_board("default")
+        asyncio.run(connect_board("default"))
         raise AssertionError("connect_board should reject an empty board")
     except FigJamAgentError as exc:
         assert "empty" in str(exc).lower()
 
 
-def test_connect_board_demo_succeeds():
-    result = connect_board("default")
+def test_connect_board_demo_succeeds(monkeypatch):
+    # Force the demo path regardless of whether FIGMA_ACCESS_TOKEN happens to
+    # be set in this process's environment (importing app.py above triggers
+    # load_dotenv, which could otherwise make get_adapter() prefer the real,
+    # network-calling MCPFigJamAdapter here - tests must not depend on that).
+    import figjam.adapter as adapter_module
+    monkeypatch.setattr(adapter_module.MCPFigJamAdapter, "is_available", lambda self: False)
+
+    result = asyncio.run(connect_board("default"))
     assert result["is_demo"] is True
     assert len(result["context"].items) > 0
     assert any("Retrieved" in step["label"] for step in result["activity"])
 
 
-def test_mcp_adapter_is_honest_about_being_unavailable():
+def test_mcp_adapter_availability_reflects_token(monkeypatch):
     adapter = MCPFigJamAdapter()
+    monkeypatch.delenv("FIGMA_ACCESS_TOKEN", raising=False)
     assert adapter.is_available() is False
-    try:
-        adapter.fetch_board("anything")
-        raise AssertionError("MCPFigJamAdapter.fetch_board should raise until a real MCP tool exists")
-    except FigJamUnavailableError as exc:
-        assert "MCP" in str(exc)
+    monkeypatch.setenv("FIGMA_ACCESS_TOKEN", "figd_test_token")
+    assert adapter.is_available() is True
+
+
+def test_map_board_data_infers_section_and_participant_geometrically():
+    # Confirmed live: figjam_get_board_contents returns a flat node list with
+    # no parent/child linkage, so section membership must be inferred from
+    # each node's position against each SECTION's bounding box.
+    board_data = {
+        "nodes": [
+            {"id": 1, "type": "SECTION", "name": "Study Space", "x": 0, "y": 0, "width": 500, "height": 500},
+            {"id": 2, "type": "STICKY", "text": "P1: too loud during finals", "x": 10, "y": 10},
+            {"id": 3, "type": "STICKY", "text": "no participant tag here", "x": 900, "y": 900},
+        ]
+    }
+    items = _map_board_data_to_raw_items(board_data)
+
+    section_item = next(i for i in items if i["id"] == "1")
+    assert section_item["type"] == "section"
+
+    inside_item = next(i for i in items if i["id"] == "2")
+    assert inside_item["section"] == "Study Space"
+    assert inside_item["metadata"]["participant"] == "P1"
+
+    outside_item = next(i for i in items if i["id"] == "3")
+    assert outside_item["section"] is None
+    assert "participant" not in outside_item["metadata"]
 
 
 def test_parse_json_handles_fenced_and_malformed():
@@ -164,9 +195,23 @@ def _run_all():
             self._restore.append((obj, name, getattr(obj, name)))
             setattr(obj, name, value)
 
+        def setenv(self, key, value):
+            self._restore.append(("env", key, os.environ.get(key)))
+            os.environ[key] = value
+
+        def delenv(self, key, raising=True):
+            self._restore.append(("env", key, os.environ.get(key)))
+            os.environ.pop(key, None)
+
         def undo(self):
-            for obj, name, value in self._restore:
-                setattr(obj, name, value)
+            for kind, name, value in reversed(self._restore):
+                if kind == "env":
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+                else:
+                    setattr(kind, name, value)
 
     tests = [
         (name, fn) for name, fn in globals().items()

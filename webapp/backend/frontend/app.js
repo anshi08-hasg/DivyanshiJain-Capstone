@@ -175,6 +175,61 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+let currentReportMarkdown = "";
+
+function renderMarkdown(md) {
+  const esc = escapeHtml(md);
+  const lines = esc.split("\n");
+  let html = "";
+  let inList = false;
+
+  function closeList() {
+    if (inList) {
+      html += "</ul>";
+      inList = false;
+    }
+  }
+
+  function inlineFormat(s) {
+    return s
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/_(.+?)_/g, "<em>$1</em>");
+  }
+
+  for (const line of lines) {
+    if (/^### /.test(line)) {
+      closeList();
+      html += `<h4>${inlineFormat(line.slice(4))}</h4>`;
+      continue;
+    }
+    if (/^## /.test(line)) {
+      closeList();
+      html += `<h3>${inlineFormat(line.slice(3))}</h3>`;
+      continue;
+    }
+    if (/^# /.test(line)) {
+      closeList();
+      html += `<h2>${inlineFormat(line.slice(2))}</h2>`;
+      continue;
+    }
+    if (/^\s*-\s+/.test(line)) {
+      if (!inList) {
+        html += "<ul>";
+        inList = true;
+      }
+      const indent = line.match(/^\s*/)[0].length;
+      const content = line.replace(/^\s*-\s+/, "");
+      html += `<li${indent > 0 ? ' class="nested"' : ""}>${inlineFormat(content)}</li>`;
+      continue;
+    }
+    closeList();
+    if (line.trim() === "") continue;
+    html += `<p>${inlineFormat(line)}</p>`;
+  }
+  closeList();
+  return html;
+}
+
 const runButton = document.getElementById("run-analysis");
 const runButtonLabel = runButton.querySelector(".btn-label");
 const runButtonSpinner = runButton.querySelector(".spinner");
@@ -234,14 +289,15 @@ document.getElementById("finalize").addEventListener("click", async () => {
   });
   const data = await res.json();
 
-  reportOutput.textContent = data.report_markdown;
+  currentReportMarkdown = data.report_markdown;
+  reportOutput.innerHTML = renderMarkdown(currentReportMarkdown);
   reportSection.hidden = false;
   setStep(3);
   reportSection.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
 document.getElementById("download-report").addEventListener("click", () => {
-  const blob = new Blob([reportOutput.textContent], { type: "text/markdown" });
+  const blob = new Blob([currentReportMarkdown], { type: "text/markdown" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
