@@ -9,7 +9,8 @@ import asyncio
 import os
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
+from flask_cors import CORS
 
 from pattern_analyzer import analyze_patterns
 from report import build_report
@@ -21,6 +22,14 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 app = Flask(__name__, static_folder="frontend", static_url_path="")
 
+# Only needed if the frontend is deployed as its own separate origin (see
+# webapp/backend/frontend/server.py); harmless no-op in the normal
+# single-service setup, where the frontend is same-origin and doesn't need
+# CORS at all. FRONTEND_ORIGIN should be the frontend service's exact URL in
+# production; "*" is fine for local dev / a low-stakes demo, not for
+# anything handling real user data.
+CORS(app, resources={r"/api/*": {"origins": os.environ.get("FRONTEND_ORIGIN", "*")}})
+
 # In-memory, single-session state for the experimental FigJam agent (same
 # pattern as the Pattern Analyzer's module-level state: no DB for this MVP).
 _figjam_state: dict = {"context": None, "analysis": None, "activity": []}
@@ -29,6 +38,19 @@ _figjam_state: dict = {"context": None, "analysis": None, "activity": []}
 @app.get("/")
 def index():
     return app.send_static_file("index.html")
+
+
+@app.get("/config.js")
+def config_js():
+    # Same-origin single-service setup: API_BASE_URL empty means the
+    # frontend's apiUrl() helper builds relative URLs, same as before this
+    # existed. Only webapp/backend/frontend/server.py (the standalone
+    # frontend service) sets a real BACKEND_URL here.
+    body = (
+        "window.API_BASE_URL = \"\";\n"
+        "window.apiUrl = function (path) { return (window.API_BASE_URL || \"\") + path; };\n"
+    )
+    return Response(body, mimetype="application/javascript")
 
 
 @app.get("/figjam")

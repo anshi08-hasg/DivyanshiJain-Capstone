@@ -113,16 +113,27 @@ webapp/figma-plugin/            Desktop Bridge plugin (manifest.json, code.js,
 webapp/backend/Procfile         Railway/Heroku-style process declaration
 webapp/backend/nixpacks.toml    tells Railway's builder to include Node.js
                                  alongside Python (see section 8)
+webapp/backend/frontend/server.py   standalone static server + /config.js,
+                                 used only for the two-service Railway setup
+                                 (Option B, section 8)
+webapp/backend/frontend/Procfile        Option B's frontend service process
+webapp/backend/frontend/requirements.txt  Option B's frontend service deps
+                                 (flask, waitress - much smaller than the
+                                 backend's, no LLM/MCP dependencies needed)
 ```
 
-Modified: `webapp/backend/app.py` (new routes below), `webapp/backend/llm_providers.py`
+Modified: `webapp/backend/app.py` (new routes below, plus `flask_cors.CORS`
+scoped to `/api/*` and a `/config.js` route for Option B), `webapp/backend/llm_providers.py`
 (MockProvider now branches by system-prompt marker so FigJam gets its own
 canned demo response instead of the Pattern Analyzer's), `webapp/backend/frontend/index.html`
-(one added nav link to `/figjam`, no other changes to the existing page),
-`webapp/backend/requirements.txt` and `webapp/.env.example` (added `mcp`,
-`httpx`, `waitress`, `FIGMA_ACCESS_TOKEN`, `FIGJAM_MCP_MODE` for the Push to
-FigJam feature and its two transport modes), `webapp/backend/frontend/figjam.html` /
-`figjam.js` (added the Push to FigJam button and the Cloud Mode pairing UI).
+and `figjam.html` (nav link to `/figjam`, plus a `<script src="config.js">`
+tag before their own scripts for Option B), `webapp/backend/frontend/app.js`
+and `figjam.js` (all 9 `fetch("/api/...")` calls changed to
+`fetch(apiUrl("/api/..."))` so they work under Option B without breaking
+Option A), `webapp/backend/requirements.txt` and `webapp/.env.example`
+(added `mcp`, `httpx`, `waitress`, `flask-cors`, `FIGMA_ACCESS_TOKEN`,
+`FIGJAM_MCP_MODE`, `FRONTEND_ORIGIN` for the Push to FigJam feature and the
+two-service deployment option).
 
 ## 5. New backend routes
 
@@ -351,53 +362,117 @@ cloud relay session to join, via a one-time 6-character code:
 
 ## 8. Deploying to Railway
 
-**Not deployed or tested against real Railway infrastructure in this
-session** - no Railway CLI or account access was available here. Everything
-below was prepared and verified as far as possible without that (Procfile
-command tested locally with `waitress-serve`; the Cloud Mode MCP path tested
-live per section 7.1), but the actual "create a Railway project, connect
-this repo, deploy" steps need to happen on your end.
+**Not deployed or tested against real Railway infrastructure directly by the
+assistant** - no Railway CLI or account access was available in this build
+environment. Everything below was prepared and verified as far as possible
+without that (every command tested locally; CORS and the two-service split
+verified with two real local server processes talking cross-origin - see
+"Two-service verification" below), and the user then deployed it for real,
+which surfaced three issues no amount of local testing could predict (see
+the subsection after the setup steps).
 
-### Files added for deployment
-- `webapp/backend/Procfile`: `web: waitress-serve --host=0.0.0.0 --port=$PORT app:app`.
-  Uses `waitress` instead of `gunicorn` specifically so it could be tested on
-  this Windows dev machine too (`gunicorn` needs `fcntl`, Unix-only);
-  `waitress` runs identically on both and is a legitimate production WSGI
-  server, not a dev-only choice.
-- `webapp/backend/nixpacks.toml`: tells Railway's Nixpacks builder to include
-  Node.js alongside Python, since `figma_mcp_client.py`'s Local Mode spawns
-  `npx`. Without this, Nixpacks would likely auto-detect only Python and
-  Local Mode would fail on Railway with "npx not found" (Cloud Mode wouldn't
-  need Node.js at all, but Local Mode is still the default unless
-  `FIGJAM_MCP_MODE=cloud` is set).
+**Railway's builder ("Railpack") does not reliably read `Procfile` or
+`nixpacks.toml`** - confirmed from real deploy logs, where it ran `python
+app.py` directly regardless of both files being present. Set the Build and
+Start Command explicitly in Railway's UI instead of relying on either file;
+they're kept in the repo mainly for other hosts/tools that do read them, and
+as a record of the intended command.
 
-### Setup steps (to do in Railway's dashboard)
-1. Create a new Railway project, connect this GitHub repo.
-2. In the service's Settings, set **Root Directory** to `webapp/backend` -
-   this is a monorepo with unrelated files at the repo root (`.claude/`,
-   other branches' work), so Railway needs to know where the actual app
-   lives to find `Procfile`, `nixpacks.toml`, and `requirements.txt`.
-3. Set these environment variables under the service's Variables tab (do
-   NOT commit a `.env` file with real secrets - `.env` is already gitignored):
-   - `LLM_PROVIDER` (`gemini`/`anthropic`/`openai`/`mock`) and whichever
-     matching `*_API_KEY` / `*_MODEL` it needs.
-   - `FIGMA_ACCESS_TOKEN` and `FIGJAM_MCP_MODE=cloud` if you want Push to
-     FigJam to work on the deployed version (see section 7.1 - Local Mode,
-     the default, cannot work once the backend isn't on your machine).
-4. Deploy. Railway sets `$PORT` automatically; the Procfile already uses it.
+### Option A: one service (recommended, simplest)
+
+The backend already serves the frontend itself (`app.py`'s `static_folder`).
+One Railway service, no CORS, no cross-origin config needed at all.
+
+1. Create a Railway project, connect this repo, one service.
+2. **Root Directory:** `webapp/backend`
+3. **Build Command:** `pip install -r requirements.txt`
+4. **Start Command:** `waitress-serve --host=0.0.0.0 --port=$PORT app:app`
+5. Environment variables (Variables tab, never commit real secrets):
+   `LLM_PROVIDER` + its matching `*_API_KEY`/`*_MODEL`; `FIGMA_ACCESS_TOKEN`
+   and `FIGJAM_MCP_MODE=cloud` if you want Push to FigJam working (Local
+   Mode, the default, cannot work once the backend isn't on your machine).
+6. Deploy. The one service's URL serves both `/` and `/figjam` and every
+   `/api/*` route together, same-origin, exactly like running `python app.py`
+   locally.
+
+### Option B: two services (frontend + backend separately)
+
+Only needed if you specifically want the frontend and backend as separate
+Railway services/URLs. This requires the CORS + `config.js` mechanism below
+- the frontend's JS was originally written assuming same-origin serving
+(relative `fetch("/api/...")`), which fails outright across two different
+service URLs without this.
+
+**Backend service:**
+1. Root Directory: `webapp/backend`
+2. Build Command: `pip install -r requirements.txt`
+3. Start Command: `waitress-serve --host=0.0.0.0 --port=$PORT app:app`
+4. Environment variables: same as Option A, plus `FRONTEND_ORIGIN` set to
+   the frontend service's exact public URL (e.g.
+   `https://your-frontend.up.railway.app`) - this restricts which origin the
+   backend's CORS policy accepts. Leaving it unset defaults to `*` (any
+   origin), fine for local testing/a low-stakes demo, not a real deployment.
+
+**Frontend service:**
+1. Root Directory: `webapp/backend/frontend`
+2. Build Command: `pip install -r requirements.txt`
+3. Start Command: `waitress-serve --host=0.0.0.0 --port=$PORT server:app`
+4. Environment variable: `BACKEND_URL` set to the backend service's exact
+   public URL (e.g. `https://your-backend.up.railway.app`, no trailing
+   slash needed - the code strips one if present).
+
+**How the cross-origin mechanism actually works:**
+- `webapp/backend/frontend/server.py` is a second, minimal Flask app whose
+  only job is serving the static files and one dynamic route, `/config.js`,
+  which writes `window.API_BASE_URL = "<BACKEND_URL>"` using that service's
+  own `BACKEND_URL` env var.
+- `index.html` and `figjam.html` both load `/config.js` before their real
+  `app.js`/`figjam.js`, which now call `fetch(apiUrl("/api/..."))` instead of
+  `fetch("/api/...")` everywhere (all 9 call sites updated) - `apiUrl()`
+  (also defined in `config.js`) prefixes the path with `API_BASE_URL`.
+- The main `app.py` also serves its own `/config.js` (with an empty
+  `API_BASE_URL`, so `apiUrl()` builds the same relative URLs as before),
+  so Option A's single-service setup is completely unaffected by any of
+  this - `apiUrl("/api/x")` resolves to `"/api/x"` either way when
+  `API_BASE_URL` is empty.
+- `app.py` also adds `flask_cors.CORS`, scoped to `/api/*` only, so the
+  backend actually accepts the frontend service's cross-origin requests
+  instead of the browser blocking them.
+
+### Two-service verification (done locally, not on Railway)
+
+Ran the real backend (`app.py`, port 5000) and the real frontend server
+(`server.py`, port 5010, `BACKEND_URL=http://127.0.0.1:5000`) as two
+separate local processes and confirmed:
+- `GET http://127.0.0.1:5010/config.js` returned the correct injected
+  `API_BASE_URL`.
+- A request to `http://127.0.0.1:5000/api/provider` with `Origin:
+  http://127.0.0.1:5010` got back `Access-Control-Allow-Origin:
+  http://127.0.0.1:5010` and a `200` - exactly what a real browser checks
+  before allowing the frontend's JS to read the response.
+- A full FigJam flow (`connect` then `analyze`) succeeded end to end with
+  that same cross-origin header set on every request.
+- Re-ran Option A's single-service mode afterward and confirmed
+  `/config.js` there still returns an empty `API_BASE_URL` and every page/
+  asset still returns `200` - the two-service work didn't regress it.
+- **Not verified:** any of this against real Railway infrastructure (two
+  actual Railway services talking to each other) - only two local processes
+  on different ports, which exercises the same cross-origin code path but
+  isn't a substitute for the real thing.
 
 ### What this means for "Push to FigJam" once deployed
-With `FIGJAM_MCP_MODE=cloud` set, the deployed app's **Generate pairing
-code** button (shown automatically in that mode) lets you pair your own,
-locally-running Figma Desktop + plugin to the relay once. After that,
-clicking **Push to FigJam** on the *publicly hosted* site writes to your
-board through the cloud relay, with nothing related to FigJam running on
-Railway itself except the outbound HTTPS calls in `figma_mcp_client.py`.
+With `FIGJAM_MCP_MODE=cloud` set on the backend service, the deployed app's
+**Generate pairing code** button (shown automatically in that mode) lets you
+pair your own, locally-running Figma Desktop + plugin to the relay once.
+After that, clicking **Push to FigJam** on the *publicly hosted* site writes
+to your board through the cloud relay, with nothing related to FigJam
+running on Railway itself except the outbound HTTPS calls in
+`figma_mcp_client.py`. This works the same way under either Option A or B.
 
-### Real deployment issues hit and fixed (from actual Railway logs)
+### Real deployment issues hit and fixed (from actual Railway logs, Option A attempt)
 
-Once the user actually deployed, three real problems surfaced that couldn't
-have been caught without a live attempt:
+Once the user actually deployed under Option A (single service), three real
+problems surfaced that couldn't have been caught without a live attempt:
 
 1. **Build failed entirely at first** - Railway's builder ("Railpack", not
    Nixpacks) reported it could only see `BUILD_LOG.md` and
@@ -433,6 +508,23 @@ have been caught without a live attempt:
    Verified locally after the move: all routes and static assets (`/`,
    `/app.js`, `/style.css`, `/figjam`, `/figjam.js`, `/api/provider`) still
    return `200`.
+
+4. **Crashed on startup with `ValueError: invalid literal for int() with base
+   10: ''`** - `os.environ.get("PORT", 5000)` only falls back to the default
+   when `PORT` is unset, not when it's set to an empty string; this
+   machine's local `.env` happened to have a leftover `PORT=` line from
+   earlier testing, which reproduced the same crash locally. Fixed by
+   treating an empty string the same as unset:
+   `int(os.environ.get("PORT", "").strip() or 5000)`.
+5. **User then tried splitting frontend and backend into two separate
+   Railway services on their own** - the frontend service displayed pages
+   correctly (they're just static files, nothing to break), but every
+   feature that depended on the API silently failed, because at that point
+   `app.js`/`figjam.js` still used relative `fetch("/api/...")` calls, which
+   resolve against whatever origin serves the page - the frontend service's
+   own origin, which has no API behind it at all. This is exactly the
+   scenario Option B above and its CORS/`config.js` mechanism now handle;
+   before that work, only Option A (one service) could actually work.
 
 `webapp/figma-plugin/` was deliberately left as a sibling directory (not
 moved) - it's only ever used for a one-time manual import into Figma
