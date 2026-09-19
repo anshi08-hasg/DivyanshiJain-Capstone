@@ -4,10 +4,16 @@ task spec: normalization, empty research, malformed responses, evidence
 mapping, adapter/agent failure handling, and FigJam layout-plan building.
 """
 
+import os
+import sys
+
 from figjam.adapter import DemoFigJamAdapter, MCPFigJamAdapter, FigJamUnavailableError
 from figjam.normalize import normalize_board
 from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidence, connect_board
 from figjam.figma_layout import build_layout_plan
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "frontend"))
+from server import _normalize_backend_url
 
 
 def test_normalize_typical_board():
@@ -115,6 +121,19 @@ def test_layout_plan_skips_empty_sections_and_uses_valid_sticky_colors():
 
 def test_layout_plan_empty_analysis_produces_no_sections():
     assert build_layout_plan({}) == []
+
+
+def test_normalize_backend_url_adds_missing_scheme():
+    # Confirmed live: a bare host with no scheme silently breaks cross-origin
+    # API calls (browser treats it as a relative path), producing
+    # 'Unexpected token <, "<!doctype "... is not valid JSON' because the
+    # request lands on the frontend's own 404 page instead of the backend.
+    assert _normalize_backend_url("my-app.up.railway.app") == "https://my-app.up.railway.app"
+    assert _normalize_backend_url("https://my-app.up.railway.app") == "https://my-app.up.railway.app"
+    assert _normalize_backend_url("http://localhost:5000") == "http://localhost:5000"
+    assert _normalize_backend_url("https://my-app.up.railway.app/") == "https://my-app.up.railway.app"
+    assert _normalize_backend_url("") == ""
+    assert _normalize_backend_url("   ") == ""
 
 
 def _run_all():
