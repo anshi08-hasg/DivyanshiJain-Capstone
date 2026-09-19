@@ -64,8 +64,13 @@ retrieved from a FigJam board, each with a stable id. Synthesize themes,
 insights, contradictions, research gaps, and design opportunities.
 
 Rules:
+- Use ONLY the research items given to you below. Do not draw on general UX
+  knowledge, common research patterns, or what this topic "usually" involves.
+  If the board is about a topic you don't recognize, that is fine - analyze
+  what is actually written, not what a typical study on that topic would say.
 - Every theme, insight, and contradiction must cite the exact item ids
-  (e.g. "N3") that support it. Never invent an id that was not given to you.
+  (e.g. "N3") that support it. Never invent an id, a participant, or a quote
+  that was not given to you.
 - A theme or insight needs at least two distinct supporting items to be
   called "recurring"; a single-item finding should still be reported but
   with only one id cited, not inflated.
@@ -73,6 +78,9 @@ Rules:
   should not contain your own inference; put inference in the "rationale" field.
 - Research gaps and design opportunities do not need evidence citations, but
   should be grounded in what is (or is not) present in the given material.
+- If the given material does not contain enough for a theme or insight you
+  were about to propose, do not include it rather than filling the gap with
+  a plausible-sounding but unsupported claim.
 
 Respond with ONLY a single valid JSON object, no markdown fences, no
 commentary, matching exactly this schema:
@@ -164,6 +172,33 @@ def _verify_evidence(context: FigJamResearchContext, evidence_ids: list[str]) ->
     return verified, len(verified) == 0
 
 
+def _evidence_confidence(context: FigJamResearchContext, verified_ids: list[str]) -> dict[str, Any]:
+    """Confidence is computed in code from the amount and diversity of
+    verified evidence, never from Gemini's own self-assessment - a model
+    saying "strong" is not evidence of anything."""
+    items_by_id = {item.id: item for item in context.items}
+    participants = sorted({
+        items_by_id[i].metadata.get("participant")
+        for i in verified_ids
+        if i in items_by_id and items_by_id[i].metadata.get("participant")
+    })
+
+    if not verified_ids:
+        confidence = "insufficient"
+    elif len(verified_ids) >= 3 and len(participants) >= 2:
+        confidence = "strong"
+    elif len(verified_ids) >= 2:
+        confidence = "medium"
+    else:
+        confidence = "limited"
+
+    return {
+        "confidence": confidence,
+        "participant_coverage": participants,
+        "evidence_count": len(verified_ids),
+    }
+
+
 def _context_prompt(context: FigJamResearchContext) -> str:
     lines = [f"Board: {context.board_name}", ""]
     for item in context.items:
@@ -193,6 +228,7 @@ def analyze_research(context: FigJamResearchContext) -> dict[str, Any]:
             verified, unsupported = _verify_evidence(context, entry.get("evidence", []))
             entry["evidence"] = verified
             entry["unsupported"] = unsupported
+            entry.update(_evidence_confidence(context, verified))
 
     activity.append(_step(f"Detected {len(themes)} theme(s)"))
     activity.append(_step(f"Found {len(contradictions)} contradiction(s)"))

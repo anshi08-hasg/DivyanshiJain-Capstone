@@ -40,6 +40,22 @@
           <h2>Connect FigJam</h2>
           <p class="panel-sub">Connect your FigJam research board and let the Research Agent analyze it.</p>
         </div>
+
+        <div id="pair-figjam-box" class="finalize-bar" hidden>
+          <p class="panel-sub">
+            <strong>First-time setup:</strong> this deployment reads FigJam through a cloud relay
+            (no local Figma Desktop needed on this server). Pair your Figma Desktop once: generate
+            a code below, then enter it in the Desktop Bridge plugin's Cloud Mode toggle. Pairing
+            persists, so you only need to do this again if the plugin disconnects.
+          </p>
+          <button id="pair-figjam-btn" type="button" class="btn btn-featured">
+            <span class="btn-label">Generate pairing code</span>
+            <span class="spinner" hidden></span>
+          </button>
+          <p id="pair-figjam-result" class="panel-sub" hidden></p>
+          <p id="pair-figjam-error" class="error-banner" hidden></p>
+        </div>
+
         <div class="panel-actions">
           <button id="connect-btn" type="button" class="btn btn-primary">
             <span class="btn-label">Connect / Select FigJam</span>
@@ -54,6 +70,24 @@
           <h2>FigJam research</h2>
         </div>
         <div id="overview-grid" class="overview-grid"></div>
+      </section>
+
+      <section id="debug-section" class="panel" hidden>
+        <details>
+          <summary class="panel-head debug-summary">
+            <h2>FigJam data received</h2>
+            <p class="panel-sub">Compare this against what's actually on your board to verify the extraction is correct before trusting the analysis below.</p>
+          </summary>
+          <p id="debug-count" class="panel-sub debug-count"></p>
+          <div class="debug-table-wrap">
+            <table class="debug-table">
+              <thead>
+                <tr><th>ID</th><th>Type</th><th>Section</th><th>Participant</th><th>Original text</th></tr>
+              </thead>
+              <tbody id="debug-items"></tbody>
+            </table>
+          </div>
+        </details>
       </section>
 
       <section id="activity-section" class="panel" hidden>
@@ -97,21 +131,6 @@
           <h3>Design opportunities</h3>
         </div>
         <ul id="opportunities-list" class="plain-list"></ul>
-
-        <div id="pair-figjam-box" class="finalize-bar" hidden>
-          <p class="panel-sub">
-            This deployment connects to FigJam via the cloud relay (no local Figma Desktop
-            needed on this server). Pair your own Figma Desktop once: generate a code below,
-            then enter it in the Desktop Bridge plugin's Cloud Mode toggle. Pairing persists,
-            you shouldn't need to repeat this unless the plugin disconnects.
-          </p>
-          <button id="pair-figjam-btn" type="button" class="btn btn-featured">
-            <span class="btn-label">Generate pairing code</span>
-            <span class="spinner" hidden></span>
-          </button>
-          <p id="pair-figjam-result" class="panel-sub" hidden></p>
-          <p id="pair-figjam-error" class="error-banner" hidden></p>
-        </div>
 
         <div class="finalize-bar">
           <p class="panel-sub">

@@ -53,7 +53,14 @@ def _find_containing_section(sections: list[dict[str, Any]], x: float, y: float)
     return None
 
 
-_PARTICIPANT_PATTERN = re.compile(r"^\s*\[?(P\d+)\b", re.IGNORECASE)
+# Confirmed live against a real FigJam board: sticky notes label participants
+# in several ways depending on how the researcher wrote them, e.g. "P1: ...",
+# "[P1] ...", or a full "Participant P1 - Aditi" header line - only matching
+# the leading "P1:" form left every real item's participant metadata empty
+# even though the participant was clearly named in the text.
+_PARTICIPANT_PATTERN = re.compile(
+    r"^\s*\[?(?:participant\s+)?(P\d+)\b", re.IGNORECASE
+)
 
 
 def _map_board_data_to_raw_items(board_data: dict[str, Any]) -> list[dict[str, Any]]:
