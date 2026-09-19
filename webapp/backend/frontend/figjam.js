@@ -266,8 +266,25 @@ pairFigjamBtn.addEventListener("click", async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Could not generate a pairing code.");
 
-    pairFigjamResult.innerHTML = `<strong>Code: ${escapeHtml(data.pairingCode)}</strong> (expires in ${escapeHtml(data.expiresIn)})<br>${data.instructions.map(escapeHtml).join("<br>")}`;
+    pairFigjamResult.innerHTML = `
+      <strong>Code: <span id="pair-code-text">${escapeHtml(data.pairingCode)}</span></strong>
+      <button type="button" id="pair-copy-btn" class="btn btn-ghost">Copy</button>
+      (expires in ${escapeHtml(data.expiresIn)})<br>${data.instructions.map(escapeHtml).join("<br>")}
+    `;
     pairFigjamResult.hidden = false;
+
+    const copyBtn = document.getElementById("pair-copy-btn");
+    const copyCode = async () => {
+      try {
+        await navigator.clipboard.writeText(data.pairingCode);
+        copyBtn.textContent = "Copied!";
+      } catch {
+        copyBtn.textContent = "Copy failed, select manually";
+      }
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
+    };
+    copyBtn.addEventListener("click", copyCode);
+    copyCode(); // also copy automatically as soon as the code is generated
   } catch (err) {
     pairFigjamError.textContent = err.message;
     pairFigjamError.hidden = false;
