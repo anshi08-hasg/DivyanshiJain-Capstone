@@ -12,6 +12,9 @@ from figjam.adapter import MCPFigJamAdapter, _map_board_data_to_raw_items
 from figjam.normalize import normalize_board
 from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidence, _evidence_confidence, connect_board
 from figjam.figma_layout import build_layout_plan
+from figjam import personas as personas_module
+from figjam.personas import generate_personas
+from figjam.persona_layout import build_persona_layout_plan
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "frontend"))
 from server import _normalize_backend_url
@@ -202,6 +205,157 @@ def test_layout_plan_skips_empty_sections_and_uses_valid_sticky_colors():
 
 def test_layout_plan_empty_analysis_produces_no_sections():
     assert build_layout_plan({}) == []
+
+
+class _FakePersonaProvider:
+    """Stands in for llm_providers.get_provider() in persona tests, the same
+    approach the rest of this pipeline uses to test evidence verification
+    without a real LLM call - the point of these tests is the code-side
+    validation, not the model's own output."""
+
+    def __init__(self, response: dict):
+        import json
+        self._raw = json.dumps(response)
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        return self._raw
+
+
+_PERSONA_TEST_BOARD = {
+    "board_name": "Test",
+    "raw_items": [
+        {"id": "N1", "type": "sticky", "content": "P1: camps out early for quiet space", "metadata": {"participant": "P1"}},
+        {"id": "N2", "type": "sticky", "content": "P3: exam week is the worst for finding space", "metadata": {"participant": "P3"}},
+        {"id": "N3", "type": "sticky", "content": "P4: studies in dorm because library is loud", "metadata": {"participant": "P4"}},
+    ],
+}
+
+
+def test_persona_grouping_produces_evidence_backed_personas(monkeypatch):
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    monkeypatch.setattr(personas_module, "get_provider", lambda: _FakePersonaProvider({
+        "personas": [{
+            "id": "PERSONA1", "name": "Test Persona", "short_description": "grounded",
+            "profile": {"role": "Student", "age": None, "location": None, "digital_behaviour": None},
+            "goals": ["g1"], "behaviours": ["b1"], "pain_points": ["p1"], "needs": ["n1"], "motivations": ["m1"],
+            "representative_quote": {"text": "camps out early for quiet space", "is_verbatim": True, "source_id": "N1"},
+            "evidence": ["N1", "N2", "N3"],
+        }],
+    }))
+
+    result = generate_personas(context, None)
+    assert len(result["personas"]) == 1
+    persona = result["personas"][0]
+    assert persona["evidence"] == ["N1", "N2", "N3"]
+    assert persona["confidence"] == "strong"
+
+
+def test_persona_evidence_traceability_multiple_participants(monkeypatch):
+    # A persona is meant to represent a GROUP, so its evidence should be able
+    # to span multiple distinct participants, not just repeat one person.
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    monkeypatch.setattr(personas_module, "get_provider", lambda: _FakePersonaProvider({
+        "personas": [{
+            "id": "PERSONA1", "name": "Test Persona", "short_description": "grounded",
+            "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
+            "representative_quote": {"text": "", "is_verbatim": False, "source_id": None},
+            "evidence": ["N1", "N2", "N3"],
+        }],
+    }))
+
+    result = generate_personas(context, None)
+    persona = result["personas"][0]
+    assert persona["participant_coverage"] == ["P1", "P3", "P4"], "must trace back to all distinct contributing participants"
+
+
+def test_persona_with_no_verifiable_evidence_is_dropped(monkeypatch):
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    monkeypatch.setattr(personas_module, "get_provider", lambda: _FakePersonaProvider({
+        "personas": [{
+            "id": "PERSONA1", "name": "Invented Persona", "short_description": "not grounded",
+            "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
+            "representative_quote": {"text": "made up", "is_verbatim": False, "source_id": None},
+            "evidence": ["N99-invented"],
+        }],
+    }))
+
+    try:
+        generate_personas(context, None)
+        raise AssertionError("a persona with zero verifiable evidence must not be returned")
+    except FigJamAgentError as exc:
+        assert "evidence-backed" in str(exc).lower()
+
+
+def test_persona_unsupported_demographic_claim_is_omitted(monkeypatch):
+    # Profile fields the model leaves null must render as omitted/"not
+    # identified", never silently invented - this is enforced by
+    # _clean_profile only ever trusting a real, non-empty string.
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    monkeypatch.setattr(personas_module, "get_provider", lambda: _FakePersonaProvider({
+        "personas": [{
+            "id": "PERSONA1", "name": "Test Persona", "short_description": "grounded",
+            "profile": {"role": "Student", "age": "", "location": None, "digital_behaviour": 42},
+            "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
+            "representative_quote": {"text": "", "is_verbatim": False, "source_id": None},
+            "evidence": ["N1"],
+        }],
+    }))
+
+    result = generate_personas(context, None)
+    profile = result["personas"][0]["profile"]
+    assert profile["role"] == "Student"
+    assert profile["age"] is None, "empty string must not pass through as a real value"
+    assert profile["location"] is None
+    assert profile["digital_behaviour"] is None, "a non-string value must not pass through as a real value"
+
+
+def test_persona_false_verbatim_claim_is_downgraded(monkeypatch):
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    monkeypatch.setattr(personas_module, "get_provider", lambda: _FakePersonaProvider({
+        "personas": [{
+            "id": "PERSONA1", "name": "Test Persona", "short_description": "grounded",
+            "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
+            "representative_quote": {"text": "this exact sentence was never said by anyone", "is_verbatim": True, "source_id": "N1"},
+            "evidence": ["N1"],
+        }],
+    }))
+
+    result = generate_personas(context, None)
+    quote = result["personas"][0]["representative_quote"]
+    assert quote["is_verbatim"] is False, "a claimed verbatim quote not actually present in its cited item must be downgraded"
+    assert quote["source_id"] is None
+
+
+def test_persona_layout_plan_uses_valid_colors_and_positions_cards_horizontally():
+    personas = [
+        {
+            "id": "PERSONA1", "name": "Alex", "short_description": "desc",
+            "profile": {"role": "Student", "age": None, "location": None, "digital_behaviour": None},
+            "goals": ["g1", "g2"], "behaviours": ["b1"], "pain_points": ["p1"], "needs": ["n1"],
+            "motivations": ["m1"], "representative_quote": {"text": "q", "is_verbatim": False, "source_id": None},
+            "evidence": ["N1"],
+        },
+        {
+            "id": "PERSONA2", "name": "Sam", "short_description": "desc",
+            "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [],
+            "motivations": [], "representative_quote": {"text": "", "is_verbatim": False, "source_id": None},
+            "evidence": ["N2"],
+        },
+    ]
+    plan = build_persona_layout_plan(personas)
+    assert len(plan) == 2
+    assert plan[1]["x"] > plan[0]["x"], "cards must be arranged left to right, not stacked at the same position"
+    assert plan[0]["x"] == 0
+
+    valid_colors = {"YELLOW", "BLUE", "GREEN", "PINK", "ORANGE", "PURPLE", "RED", "LIGHT_GRAY", "GRAY"}
+    for card in plan:
+        assert card["width"] > 0 and card["height"] > 0
+        for sticky in card["stickies"]:
+            assert sticky["color"] in valid_colors
+
+
+def test_persona_layout_plan_empty_list_produces_no_cards():
+    assert build_persona_layout_plan([]) == []
 
 
 def test_normalize_backend_url_adds_missing_scheme():

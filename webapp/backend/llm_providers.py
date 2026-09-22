@@ -85,6 +85,8 @@ class MockProvider(LLMProvider):
     """
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
+        if "Persona Synthesist" in system_prompt:
+            return _MOCK_FIGJAM_PERSONAS_RESPONSE
         if "Research Critic" in system_prompt:
             return _MOCK_FIGJAM_CRITIC_RESPONSE
         if "FigJam Research Agent answering" in system_prompt:
@@ -163,6 +165,39 @@ _MOCK_FIGJAM_CRITIC_RESPONSE = """
   "verdicts": [
     {"insight_id": "INS1", "verdict": "validated", "note": "Three participants (P1, P3, P4) independently describe the same exam-week crowding/noise pattern with no contradicting item in the board."},
     {"insight_id": "INS2", "verdict": "weak", "note": "Only one item (N11) supports this; N13 directly contradicts a strong booking preference. Treat as a hypothesis, not a validated insight."}
+  ]
+}
+"""
+
+_MOCK_FIGJAM_PERSONAS_RESPONSE = """
+{
+  "personas": [
+    {
+      "id": "PERSONA1",
+      "name": "Priya, the Early Arriver",
+      "short_description": "A student who treats quiet study space as something you have to claim early, not something that's simply available.",
+      "profile": {"role": "Student", "age": null, "location": null, "digital_behaviour": null},
+      "goals": ["Find a quiet, reliable place to study during exam weeks", "Avoid wasting time hunting for space"],
+      "behaviours": ["Arrives very early (around 7am) to secure a spot", "Moves to a different location (dorm) when the usual space is too loud"],
+      "pain_points": ["Quiet rooms fill up fast during exams", "Study spaces get crowded and noisy during high-demand periods"],
+      "needs": ["Predictable availability of quiet space", "More capacity during exam periods specifically"],
+      "motivations": ["Wants to avoid the stress of not finding a seat", "Values a consistent, distraction-free environment"],
+      "representative_quote": {"text": "I always camp outside the silent room at 7am during finals, otherwise there's nowhere quiet left by 9.", "is_verbatim": true, "source_id": "N2"},
+      "evidence": ["N2", "N3", "N4"]
+    },
+    {
+      "id": "PERSONA2",
+      "name": "Devraj, the Planner",
+      "short_description": "A student who books group spaces ahead of time rather than risk showing up to nothing available.",
+      "profile": {"role": "Student", "age": null, "location": null, "digital_behaviour": "Books rooms online in advance"},
+      "goals": ["Guarantee a group room is available for project meetings"],
+      "behaviours": ["Books the group room online the night before"],
+      "pain_points": ["Without booking ahead, the group ends up wandering the floor looking for space"],
+      "needs": ["A reliable booking system for group rooms"],
+      "motivations": ["Wants certainty over convenience"],
+      "representative_quote": {"text": "Booking ahead is the only way I've found to guarantee we actually get a room for project meetings.", "is_verbatim": true, "source_id": "N12"},
+      "evidence": ["N11", "N12"]
+    }
   ]
 }
 """

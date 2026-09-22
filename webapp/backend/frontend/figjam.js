@@ -16,13 +16,23 @@ const contradictionsList = document.getElementById("contradictions-list");
 const gapsList = document.getElementById("gaps-list");
 const opportunitiesList = document.getElementById("opportunities-list");
 
+const personasSection = document.getElementById("personas-section");
+const personasList = document.getElementById("personas-list");
+const personasStatusList = document.getElementById("personas-status-list");
+const generatePersonasBtn = document.getElementById("generate-personas-btn");
+const personasError = document.getElementById("personas-error");
+const pushPersonasBar = document.getElementById("push-personas-bar");
+const pushPersonasBtn = document.getElementById("push-personas-btn");
+const pushPersonasError = document.getElementById("push-personas-error");
+const pushPersonasSuccess = document.getElementById("push-personas-success");
+
 const askSection = document.getElementById("ask-section");
 const askTranscript = document.getElementById("ask-transcript");
 const askInput = document.getElementById("ask-input");
 const askBtn = document.getElementById("ask-btn");
 const askError = document.getElementById("ask-error");
 
-let state = { themes: [], insights: [], contradictions: [], gaps: [], opportunities: [], items: {} };
+let state = { themes: [], insights: [], contradictions: [], gaps: [], opportunities: [], items: {}, personas: [] };
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -245,6 +255,7 @@ runAnalysisBtn.addEventListener("click", async () => {
 
     renderActivity(data.activity);
     resultsSection.hidden = false;
+    personasSection.hidden = false;
     askSection.hidden = false;
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
@@ -369,5 +380,115 @@ pushFigjamBtn.addEventListener("click", async () => {
     pushFigjamError.hidden = false;
   } finally {
     setBusy(pushFigjamBtn, false, "Push to FigJam");
+  }
+});
+
+function personaInitials(name) {
+  return (name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+}
+
+function personaList(items, emptyText) {
+  const list = items && items.length ? items : [emptyText];
+  return list.map((i) => `<li>${escapeHtml(i)}</li>`).join("");
+}
+
+function renderPersonaCard(persona) {
+  const card = document.createElement("div");
+  card.className = "persona-card";
+
+  const profile = persona.profile || {};
+  const profileParts = [
+    ["Role", profile.role], ["Age", profile.age],
+    ["Location", profile.location], ["Digital behaviour", profile.digital_behaviour],
+  ].map(([label, value]) => `<span>${escapeHtml(label)}: ${escapeHtml(value || "Not identified in research")}</span>`);
+
+  const quote = persona.representative_quote || {};
+  const quoteHtml = quote.text
+    ? `"${escapeHtml(quote.text)}"${quote.is_verbatim ? "" : `<span class="synthesized-tag">Synthesized statement, not a direct quote</span>`}`
+    : `<em>No representative quote identified in research.</em>`;
+
+  card.innerHTML = `
+    <div class="persona-head">
+      <div class="persona-avatar">${escapeHtml(personaInitials(persona.name))}</div>
+      <div>
+        <h4>${escapeHtml(persona.name || "Unnamed persona")}</h4>
+        <p>${escapeHtml(persona.short_description || "")}</p>
+      </div>
+    </div>
+    <div class="persona-profile">${profileParts.join("")}</div>
+    <div class="persona-columns">
+      <div><h5>Goals</h5><ul>${personaList(persona.goals, "Not identified in research")}</ul></div>
+      <div><h5>Pain points</h5><ul>${personaList(persona.pain_points, "Not identified in research")}</ul></div>
+    </div>
+    <div class="persona-columns">
+      <div><h5>Behaviours</h5><ul>${personaList(persona.behaviours, "Not identified in research")}</ul></div>
+      <div><h5>Needs</h5><ul>${personaList(persona.needs, "Not identified in research")}</ul></div>
+    </div>
+    <div class="persona-block"><h5>Motivations</h5><ul>${personaList(persona.motivations, "Not identified in research")}</ul></div>
+    <div class="persona-quote">${quoteHtml}</div>
+    <div class="meta">${confidenceBadge(persona)}${evidenceChips(persona.evidence)}</div>
+  `;
+  return card;
+}
+
+function appendStatusStep(label) {
+  personasStatusList.hidden = false;
+  const li = document.createElement("li");
+  li.innerHTML = `${escapeHtml(label)}<span class="activity-time"></span>`;
+  personasStatusList.appendChild(li);
+}
+
+generatePersonasBtn.addEventListener("click", async () => {
+  personasError.hidden = true;
+  pushPersonasBar.hidden = true;
+  personasList.innerHTML = "";
+  personasStatusList.innerHTML = "";
+  personasStatusList.hidden = true;
+  setBusy(generatePersonasBtn, true, "Generate Personas in FigJam");
+
+  try {
+    appendStatusStep("Analyzing research and grouping participants...");
+    const res = await fetch(apiUrl("/api/figjam/generate-personas"), { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Could not generate personas.");
+
+    appendStatusStep("Validating persona claims against research evidence...");
+    state.personas = data.personas || [];
+    state.personas.forEach((p) => personasList.appendChild(renderPersonaCard(p)));
+    appendStatusStep(`${state.personas.length} evidence-backed persona(s) ready`);
+
+    pushPersonasBar.hidden = false;
+  } catch (err) {
+    personasError.textContent = err.message;
+    personasError.hidden = false;
+  } finally {
+    setBusy(generatePersonasBtn, false, "Generate Personas in FigJam");
+  }
+});
+
+pushPersonasBtn.addEventListener("click", async () => {
+  pushPersonasError.hidden = true;
+  pushPersonasSuccess.hidden = true;
+  setBusy(pushPersonasBtn, true, "Push Personas to FigJam");
+
+  try {
+    appendStatusStep("Creating FigJam layout...");
+    const res = await fetch(apiUrl("/api/figjam/push-personas"), { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Could not push personas to FigJam.");
+
+    appendStatusStep("Pushed to FigJam ✓");
+    pushPersonasSuccess.textContent = `Created ${data.stickies_created} element(s) across ${data.personas.length} persona card(s): ${data.personas.join(", ")}.`;
+    pushPersonasSuccess.hidden = false;
+    data.activity.forEach((label) => {
+      const li = document.createElement("li");
+      li.innerHTML = `${escapeHtml(label)}<span class="activity-time"></span>`;
+      activityList.appendChild(li);
+    });
+  } catch (err) {
+    pushPersonasError.textContent = err.message;
+    pushPersonasError.hidden = false;
+  } finally {
+    setBusy(pushPersonasBtn, false, "Push Personas to FigJam");
   }
 });
