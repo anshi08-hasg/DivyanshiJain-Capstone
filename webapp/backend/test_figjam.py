@@ -19,6 +19,7 @@ from llm_providers import OpenAIProvider, get_provider
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "frontend"))
 from server import _normalize_backend_url
+import app as app_module
 from app import _normalize_origin
 
 
@@ -397,6 +398,48 @@ def test_persona_layout_plan_uses_valid_colors_and_positions_cards_horizontally(
 
 def test_persona_layout_plan_empty_list_produces_no_cards():
     assert build_persona_layout_plan([]) == []
+
+
+def test_generate_personas_route_step_activity_excludes_unrelated_prior_steps(monkeypatch):
+    # Confirmed live (user report): the persona status feed showed leftover
+    # "Created section 'Design Opportunities'" lines from an earlier, unrelated
+    # Push to FigJam click. The route's "activity" field is the cumulative
+    # session-wide log by design (used elsewhere for the main activity feed),
+    # so the frontend must use a separate, call-scoped field instead of
+    # slicing the cumulative one - this locks in that the route provides it.
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    app_module._figjam_state["context"] = context
+    app_module._figjam_state["analysis"] = None
+    app_module._figjam_state["personas"] = None
+    app_module._figjam_state["activity"] = [
+        {"label": "Created section 'Design Opportunities'", "at": "10:00:00"},
+        {"label": "Created 4 sticky note(s) in 'Design Opportunities'", "at": "10:00:01"},
+    ]
+
+    monkeypatch.setattr(personas_module, "get_provider", lambda: _FakePersonaProvider({
+        "personas": [{
+            "id": "PERSONA1", "name": "Test Persona", "short_description": "grounded",
+            "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
+            "representative_quote": {"text": "", "is_verbatim": False, "source_id": None},
+            "evidence": ["N1"],
+        }],
+    }))
+
+    client = app_module.app.test_client()
+    res = client.post("/api/figjam/generate-personas")
+    data = res.get_json()
+
+    step_labels = [s["label"] for s in data["step_activity"]]
+    assert "Design Opportunities" not in " ".join(step_labels), \
+        "step_activity must not carry over unrelated activity from a prior action"
+    assert any("Persona Synthesist" in label for label in step_labels)
+
+    all_labels = [s["label"] for s in data["activity"]]
+    assert any("Design Opportunities" in label for label in all_labels), \
+        "the cumulative 'activity' field must still carry full session history for the main activity log"
+
+    app_module._figjam_state["context"] = None
+    app_module._figjam_state["personas"] = None
 
 
 def test_normalize_backend_url_adds_missing_scheme():

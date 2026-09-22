@@ -67,6 +67,19 @@ connectBtn.addEventListener("click", async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Could not connect to FigJam.");
 
+    // A successful connect resets analysis/personas server-side
+    // (_figjam_state in app.py) - any results or persona cards already on
+    // screen from a previous connection are now stale and would fail if
+    // pushed, so clear them rather than leaving them looking valid.
+    resultsSection.hidden = true;
+    personasSection.hidden = true;
+    askSection.hidden = true;
+    personasList.innerHTML = "";
+    personasStatusList.innerHTML = "";
+    personasStatusList.hidden = true;
+    pushPersonasBar.hidden = true;
+    state.personas = [];
+
     overviewGrid.innerHTML = [
       ["Board", data.overview.board_name],
       ["Research items", data.overview.research_items],
@@ -465,7 +478,7 @@ generatePersonasBtn.addEventListener("click", async () => {
     // just-executed activity trail (counts of candidates/drops are computed
     // server-side from the actual LLM response, not guessed here).
     personasStatusList.innerHTML = "";
-    (data.activity || []).slice(-4).forEach((entry) => appendStatusStep(`✓ ${entry.label}`));
+    (data.step_activity || []).forEach((entry) => appendStatusStep(`✓ ${entry.label}`));
 
     state.personas = data.personas || [];
     state.personas.forEach((p) => personasList.appendChild(renderPersonaCard(p)));
@@ -483,6 +496,7 @@ generatePersonasBtn.addEventListener("click", async () => {
 pushPersonasBtn.addEventListener("click", async () => {
   pushPersonasError.hidden = true;
   pushPersonasSuccess.hidden = true;
+  personasStatusList.innerHTML = "";
   setBusy(pushPersonasBtn, true, "Push Personas to FigJam");
 
   try {

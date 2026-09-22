@@ -193,6 +193,11 @@ def figjam_generate_personas():
     return jsonify({
         "personas": result["personas"],
         "activity": _figjam_state["activity"],
+        # This call's own steps only, not the cumulative session log above -
+        # the frontend's persona status feed must show what THIS action did,
+        # not whatever unrelated action (e.g. Push to FigJam) happened most
+        # recently in the same session.
+        "step_activity": result["activity"],
     })
 
 
