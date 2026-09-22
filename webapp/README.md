@@ -6,7 +6,7 @@ Code by `.claude/agents/researchmate-agent.md`) as a normal web app, with no
 dependency on Claude Code itself.
 
 The LLM backend is pluggable (`backend/llm_providers.py`): Anthropic, OpenAI,
-Gemini, or a built-in offline mock, selected via environment variables. Only
+Groq, or a built-in offline mock, selected via environment variables. Only
 the Pattern Analyzer stage is implemented; the rest of the MVP pipeline
 (Quote Extractor, Interview Analyzer, Theme Mapper, Insight Generator) is not
 yet built here.

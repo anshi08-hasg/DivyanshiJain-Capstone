@@ -78,11 +78,14 @@ def figjam_page():
 
 @app.get("/api/provider")
 def provider():
+    # Mirrors get_provider()'s own fallback priority exactly (llm_providers.py)
+    # so this display-only endpoint never reports a different provider than
+    # the one actually used for real calls.
     name = os.environ.get("LLM_PROVIDER", "").strip().lower()
     if not name:
-        name = "gemini" if os.environ.get("GEMINI_API_KEY") else (
-            "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else (
-                "openai" if os.environ.get("OPENAI_API_KEY") else "mock"
+        name = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else (
+            "openai" if os.environ.get("OPENAI_API_KEY") else (
+                "groq" if os.environ.get("GROQ_API_KEY") else "mock"
             )
         )
     return jsonify({"provider": name})
@@ -156,7 +159,7 @@ def figjam_analyze():
     except FigJamAgentError as exc:
         return jsonify({"error": str(exc)}), 502
     except Exception as exc:  # noqa: BLE001 - surface any unexpected provider error to the UI
-        return jsonify({"error": f"Gemini analysis failed: {exc}"}), 502
+        return jsonify({"error": f"LLM analysis failed: {exc}"}), 502
 
     _figjam_state["analysis"] = result
     _figjam_state["activity"] = _figjam_state["activity"] + result["activity"]
@@ -229,7 +232,7 @@ def figjam_ask():
     except FigJamAgentError as exc:
         return jsonify({"error": str(exc)}), 502
     except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": f"Gemini failed to answer: {exc}"}), 502
+        return jsonify({"error": f"LLM failed to answer: {exc}"}), 502
 
     return jsonify(result)
 

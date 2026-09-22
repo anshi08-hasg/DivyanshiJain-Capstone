@@ -15,6 +15,7 @@ from figjam.figma_layout import build_layout_plan
 from figjam import personas as personas_module
 from figjam.personas import generate_personas
 from figjam.persona_layout import build_persona_layout_plan
+from llm_providers import OpenAIProvider, get_provider
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "frontend"))
 from server import _normalize_backend_url
@@ -424,6 +425,81 @@ def test_normalize_origin_adds_missing_scheme():
     assert _normalize_origin("my-app.up.railway.app/") == "https://my-app.up.railway.app"
     assert _normalize_origin("*") == "*"
     assert _normalize_origin("") == ""
+
+
+def _clear_provider_env(mp):
+    for key in ("LLM_PROVIDER", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "GROQ_MODEL", "GEMINI_API_KEY"):
+        mp.delenv(key, raising=False)
+
+
+def test_get_provider_selects_groq_via_explicit_llm_provider(monkeypatch):
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key")
+
+    provider = get_provider()
+    assert isinstance(provider, OpenAIProvider)
+    assert str(provider._client.base_url) == "https://api.groq.com/openai/v1/"
+    assert provider._model == "openai/gpt-oss-120b", "must use a sensible default Groq model when GROQ_MODEL isn't set"
+
+
+def test_get_provider_selects_groq_via_key_presence_when_unset(monkeypatch):
+    # Same auto-detect convenience already extended to anthropic/openai:
+    # if LLM_PROVIDER is left blank but a Groq key is present, Groq is used
+    # without requiring the user to also set LLM_PROVIDER explicitly.
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key")
+
+    provider = get_provider()
+    assert isinstance(provider, OpenAIProvider)
+    assert str(provider._client.base_url) == "https://api.groq.com/openai/v1/"
+
+
+def test_get_provider_respects_custom_groq_model(monkeypatch):
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test_key")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-20b")
+
+    provider = get_provider()
+    assert provider._model == "openai/gpt-oss-20b"
+
+
+def test_get_provider_missing_groq_api_key_raises_clear_error(monkeypatch):
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+
+    try:
+        get_provider()
+        raise AssertionError("must raise when LLM_PROVIDER=groq but GROQ_API_KEY is missing")
+    except ValueError as exc:
+        assert "GROQ_API_KEY" in str(exc)
+
+
+def test_get_provider_rejects_gemini_as_unknown_provider(monkeypatch):
+    # Gemini is fully removed - explicitly requesting it must fail loudly,
+    # not silently fall back to anything.
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+
+    try:
+        get_provider()
+        raise AssertionError("LLM_PROVIDER=gemini must no longer be accepted")
+    except ValueError as exc:
+        message = str(exc)
+        assert "gemini" not in message.lower().replace("unknown llm_provider: 'gemini'", "")
+        assert "groq" in message.lower()
+
+
+def test_get_provider_gemini_api_key_alone_has_no_effect(monkeypatch):
+    # A leftover GEMINI_API_KEY in the environment (e.g. from before this
+    # migration) must not activate any hidden Gemini-shaped path - there is
+    # no code left that even looks at this variable.
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "leftover-value-should-be-ignored")
+
+    provider = get_provider()
+    assert provider.__class__.__name__ == "MockProvider"
 
 
 def _run_all():

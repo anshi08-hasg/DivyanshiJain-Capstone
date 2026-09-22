@@ -225,7 +225,7 @@ function renderInsights() {
 
 runAnalysisBtn.addEventListener("click", async () => {
   analyzeError.hidden = true;
-  setBusy(runAnalysisBtn, true, "Analyze with Gemini");
+  setBusy(runAnalysisBtn, true, "Analyze research");
 
   try {
     const res = await fetch(apiUrl("/api/figjam/analyze"), { method: "POST" });
@@ -262,7 +262,7 @@ runAnalysisBtn.addEventListener("click", async () => {
     analyzeError.textContent = err.message;
     analyzeError.hidden = false;
   } finally {
-    setBusy(runAnalysisBtn, false, "Analyze with Gemini");
+    setBusy(runAnalysisBtn, false, "Analyze research");
   }
 });
 
@@ -455,7 +455,7 @@ generatePersonasBtn.addEventListener("click", async () => {
   try {
     appendStatusStep(`✓ Research loaded (${researchItemCount} research item(s))`);
     appendStatusStep(`✓ Participants identified (${participantCount})`);
-    appendStatusStep("→ Sending to Gemini for behavioural clustering...");
+    appendStatusStep("→ Sending to the LLM for behavioural clustering...");
 
     const res = await fetch(apiUrl("/api/figjam/generate-personas"), { method: "POST" });
     const data = await res.json();
@@ -463,7 +463,7 @@ generatePersonasBtn.addEventListener("click", async () => {
 
     // Replace the optimistic pre-request steps with the backend's real,
     // just-executed activity trail (counts of candidates/drops are computed
-    // server-side from the actual Gemini response, not guessed here).
+    // server-side from the actual LLM response, not guessed here).
     personasStatusList.innerHTML = "";
     (data.activity || []).slice(-4).forEach((entry) => appendStatusStep(`✓ ${entry.label}`));
 

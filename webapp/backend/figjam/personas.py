@@ -1,7 +1,7 @@
 """Persona synthesis stage of the FigJam Research Agent.
 
 Extends the existing Retrieve -> Normalize -> Analyze -> Critique pipeline
-(research_agent.py) with one more Gemini reasoning step: cluster the same
+(research_agent.py) with one more LLM reasoning step: cluster the same
 retrieved-and-verified research items into a small number of evidence-backed
 personas. Reuses research_agent.py's evidence verification and confidence
 computation rather than reimplementing them, so a persona's evidence is held
@@ -148,7 +148,7 @@ def _verify_quote(quote: dict[str, Any] | None, context: FigJamResearchContext, 
 
 
 def generate_personas(context: FigJamResearchContext, analysis: dict[str, Any] | None) -> dict[str, Any]:
-    """Runs the Persona Synthesist (Gemini) + evidence verification (code).
+    """Runs the Persona Synthesist (LLM) + evidence verification (code).
     Returns {"personas": [...], "activity": [...]}. Personas with zero
     verified evidence are dropped, not shown as if grounded."""
     activity: list[dict[str, Any]] = []
@@ -162,7 +162,7 @@ def generate_personas(context: FigJamResearchContext, analysis: dict[str, Any] |
             + "\nInsights: " + ", ".join(i.get("statement", "") for i in analysis.get("insights", []))
         )
 
-    activity.append(_step("Sent research context to Gemini (Persona Synthesist)"))
+    activity.append(_step("Sent research context to the LLM (Persona Synthesist)"))
     raw = provider.complete(PERSONA_SYSTEM_PROMPT, "\n".join(prompt_parts))
     parsed = _parse_json(raw)
     candidates = parsed.get("personas", [])

@@ -2,8 +2,13 @@
 
 The Pattern Analyzer logic (pattern_analyzer.py) talks to whatever provider
 is returned by get_provider() and never imports a specific vendor SDK
-directly, so the webapp can run against Claude, OpenAI, or fully offline
-(MockProvider) without any code changes elsewhere.
+directly, so the webapp can run against Claude, OpenAI, Groq, or fully
+offline (MockProvider) without any code changes elsewhere.
+
+Groq is served through OpenAIProvider itself (Groq's API is
+OpenAI-compatible; only the base_url and default model differ), not a
+separate provider class, per the existing "no duplicated provider logic"
+design - see get_provider() below.
 """
 
 import abc
@@ -33,39 +38,28 @@ class AnthropicProvider(LLMProvider):
         return "".join(block.text for block in response.content if block.type == "text")
 
 
-class GeminiProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str):
-        import google.generativeai as genai
-
-        genai.configure(api_key=api_key)
-        self._model = genai.GenerativeModel(model_name=model, system_instruction=None)
-        self._system_prompt_cache = None
-        self._model_name = model
-        self._genai = genai
-
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        # Rebuild the model only when the system prompt changes, since Gemini
-        # takes system_instruction at model-construction time, not per-call.
-        if system_prompt != self._system_prompt_cache:
-            self._model = self._genai.GenerativeModel(
-                model_name=self._model_name, system_instruction=system_prompt
-            )
-            self._system_prompt_cache = system_prompt
-
-        response = self._model.generate_content(user_prompt)
-        return response.text
-
-
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str):
+    """Talks to any OpenAI-compatible chat completions API. Used directly
+    for real OpenAI, and reused as-is for Groq (get_provider() just passes a
+    different base_url/model) since Groq's API is a drop-in-compatible
+    superset of the same client library - a separate GroqProvider class
+    would only duplicate this exact request/response shape."""
+
+    def __init__(self, api_key: str, model: str, base_url: str | None = None):
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key)
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
         self._model = model
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
+        # json_object mode makes the response reliably parseable JSON rather
+        # than trusting the model to follow the "respond with ONLY a JSON
+        # object" instruction unaided - every system prompt in this project
+        # already contains the word "json" (required by this mode) as part
+        # of its own output-format instructions.
         response = self._client.chat.completions.create(
             model=self._model,
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -211,6 +205,9 @@ _MOCK_FIGJAM_ASK_RESPONSE = """
 """
 
 
+_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+
 def get_provider() -> LLMProvider:
     provider_name = os.environ.get("LLM_PROVIDER", "").strip().lower()
 
@@ -226,13 +223,20 @@ def get_provider() -> LLMProvider:
             model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         )
 
-    if provider_name == "gemini" or (not provider_name and os.environ.get("GEMINI_API_KEY")):
-        return GeminiProvider(
-            api_key=os.environ["GEMINI_API_KEY"],
-            model=os.environ.get("GEMINI_MODEL", "gemini-3.6-flash"),
+    if provider_name == "groq" or (not provider_name and os.environ.get("GROQ_API_KEY")):
+        if not os.environ.get("GROQ_API_KEY", "").strip():
+            raise ValueError(
+                "LLM_PROVIDER is set to 'groq' but GROQ_API_KEY is not set. "
+                "Get a key from console.groq.com and set GROQ_API_KEY in .env "
+                "(or as a Railway service variable in production)."
+            )
+        return OpenAIProvider(
+            api_key=os.environ["GROQ_API_KEY"],
+            model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
+            base_url=_GROQ_BASE_URL,
         )
 
     if provider_name in ("", "mock"):
         return MockProvider()
 
-    raise ValueError(f"Unknown LLM_PROVIDER: {provider_name!r} (expected anthropic, openai, gemini, or mock)")
+    raise ValueError(f"Unknown LLM_PROVIDER: {provider_name!r} (expected anthropic, openai, groq, or mock)")

@@ -3,8 +3,8 @@
 ## 1. What was built
 
 An experimental extension of the standalone ResearchMate webapp (`webapp/`)
-that connects a FigJam research board to a Gemini-backed research agent:
-retrieve, normalize, analyze (Gemini), critique (a second Gemini pass), and
+that connects a FigJam research board to an LLM-backed research agent:
+retrieve, normalize, analyze (LLM), critique (a second LLM pass), and
 present structured, evidence-linked results in a new frontend page, with a
 follow-up question and answer interface grounded in the same board.
 
@@ -58,13 +58,14 @@ in `adapter.py`):**
   without that prefix simply have no `participant` in their metadata, which
   is honest, not a guess.
 
-**Gemini reasoning is real, not simulated**, independent of whether the
-board itself is real or demo. The two-stage Gemini pipeline (Pattern
+**LLM reasoning is real, not simulated**, independent of whether the
+board itself is real or demo. The two-stage pipeline (Pattern
 Finder, then Research Critic) is fully implemented against the project's
-existing pluggable `llm_providers.py` (Anthropic / OpenAI / Gemini / offline
-mock). It was verified with a real Gemini API call during an earlier part
-of this build (see "What was tested" below) before the free-tier daily
-quota ran out from testing.
+existing pluggable `llm_providers.py` (Anthropic / OpenAI / Groq / offline
+mock - Groq is the default in this deployment; Gemini support was removed).
+Earlier revisions of this build ran the same pipeline against a real Gemini
+API call before free-tier quota ran out (see "What was tested" below); it
+has since been verified again with a real Groq call.
 
 ## 3. Architecture
 
@@ -74,8 +75,8 @@ flowchart LR
     A2[Demo board: fixed sample data<br/>only if no FIGMA_ACCESS_TOKEN] --> C[Research Data Layer]
     B -->|geometric section mapping| C
     C --> D[Research Agent]
-    D --> E[Gemini: Pattern Finder]
-    E --> F[Gemini: Research Critic]
+    D --> E[LLM: Pattern Finder]
+    E --> F[LLM: Research Critic]
     F --> G[Structured Insights + Evidence Check]
     G --> H[Frontend]
     H -->|Ask your research| D
@@ -87,11 +88,11 @@ flowchart LR
 
 Code = deterministic data operations: retrieving raw items, normalizing them
 into typed `ResearchItem`s, counting, grouping by section, and verifying
-that every evidence ID Gemini cites actually exists in the retrieved board
+that every evidence ID the LLM cites actually exists in the retrieved board
 (if not, the claim is dropped down to "unsupported" in code, not trusted
 from the model).
 
-Gemini = reasoning only: synthesizing themes/insights/contradictions/gaps/
+LLM = reasoning only: synthesizing themes/insights/contradictions/gaps/
 opportunities (Pattern Finder), then challenging those insights for
 evidence strength, overgeneralization, and contradictions (Research
 Critic), and answering researcher questions grounded in the board.
@@ -106,7 +107,7 @@ webapp/backend/figjam/
                         DemoFigJamAdapter (sample board), get_adapter()
   normalize.py          raw board -> FigJamResearchContext (deterministic)
   research_agent.py     connect_board(), analyze_research(), ask_question()
-                        (Gemini calls + evidence verification + activity log)
+                        (LLM calls + evidence verification + activity log)
   figma_mcp_client.py    real MCP client for Figma Console MCP (write path):
                         create_section(), create_stickies(), list_tools(),
                         wait_for_bridge() (polls for the plugin to reconnect)
@@ -173,11 +174,11 @@ two-service deployment option).
 State is in-memory, single-session, matching the existing Pattern Analyzer
 page's approach (no database introduced for this MVP).
 
-## 6. How Gemini is used
+## 6. How the LLM is used
 
 Two distinct system prompts, both going through the existing
 `llm_providers.get_provider()` abstraction (so this works with Anthropic or
-OpenAI too, not only Gemini, by changing `LLM_PROVIDER` in `.env`):
+OpenAI or Groq too, by changing `LLM_PROVIDER` in `.env`):
 
 1. **Pattern Finder** (`ANALYZE_SYSTEM_PROMPT` in `research_agent.py`): given
    every research item with its stable id, produce themes, insights,
@@ -190,7 +191,7 @@ OpenAI too, not only Gemini, by changing `LLM_PROVIDER` in `.env`):
 After both calls, application code (`_verify_evidence`) drops any cited id
 that doesn't actually exist in the retrieved board and marks that claim
 `unsupported: true` (surfaced in the UI as "Unsupported / needs
-verification"), so Gemini cannot silently invent evidence.
+verification"), so the LLM cannot silently invent evidence.
 
 ## 7. Writing output back to FigJam ("Push to FigJam")
 
@@ -553,10 +554,10 @@ python app.py
 
 Open `http://localhost:5000/figjam`. Click **Connect / Select FigJam**
 (connects the demo board, since no MCP source is available), then
-**Analyze with Gemini**. Ask follow-up questions in **Ask your research**
+**Analyze research**. Ask follow-up questions in **Ask your research**
 once analysis has run.
 
-Configure the LLM provider via the repo root `.env` (`LLM_PROVIDER=gemini|
+Configure the LLM provider via the repo root `.env` (`LLM_PROVIDER=groq|
 anthropic|openai|mock`), same as the rest of the webapp.
 
 To also use **Push to FigJam** (section 7): install Node.js, set
@@ -642,10 +643,12 @@ board and the Desktop Bridge plugin running before clicking the button.
 - No automated test hits the actual Flask routes (only the underlying
   pipeline functions are unit-tested); route-level testing was done manually
   via HTTP calls during the session instead of as a checked-in test.
-- `google-generativeai` (used by the existing `GeminiProvider`) is marked
-  deprecated upstream in favor of `google-genai`; not migrated here since
-  it's shared with the already-working Pattern Analyzer page and migrating
-  it was out of scope for this experimental branch.
+- ~~`google-generativeai` (used by the existing `GeminiProvider`) is marked
+  deprecated upstream in favor of `google-genai`~~ **Resolved:** Gemini was
+  removed as a provider entirely (see the LLM provider migration note below);
+  `google-generativeai` is no longer a dependency and `GeminiProvider` no
+  longer exists. Groq is the active provider (OpenAI-compatible API, served
+  through the existing `OpenAIProvider` with a different base_url).
 - ~~"Push to FigJam" cannot be verified end-to-end from this build
   environment~~ **Resolved:** verified live with the user driving the Figma
   Desktop/plugin side (section 7). A real push (5 sections, 8 stickies)
@@ -686,7 +689,9 @@ board and the Desktop Bridge plugin running before clicking the button.
   the same `raw_items` shape used by `DemoFigJamAdapter`.
 - Persist researcher decisions (approve/edit/challenge/reject) server-side
   instead of only in frontend state, so they survive a page reload.
-- Migrate `GeminiProvider` off the deprecated `google-generativeai` package.
+- ~~Migrate `GeminiProvider` off the deprecated `google-generativeai`
+  package.~~ **Resolved:** Gemini removed entirely, Groq is now the active
+  provider.
 - Add a route-level test (e.g. using Flask's test client) instead of relying
   on manual HTTP verification during development.
 - Once `figjam_create_stickies`'s return shape is confirmed to include usable
