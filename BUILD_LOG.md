@@ -750,3 +750,100 @@ machine) was verified live.
   (same `LLM_PROVIDER=mock` local-environment limitation as the prior
   commit); only the mock-provider path plus the evidence-verification/
   confidence logic around it was exercised against real board data.
+
+## figmaconnecttry branch — Evidence-backed persona synthesis, pushed directly to FigJam
+
+### What shipped
+- New pipeline stage extending the existing Retrieve -> Normalize ->
+  Analyze -> Critique flow: a Persona Synthesist (`figjam/personas.py`)
+  that clusters the same retrieved-and-verified research items into 2-4
+  evidence-backed personas via a third Gemini call, reusing
+  `research_agent.py`'s `_verify_evidence`/`_evidence_confidence`/
+  `_parse_json` directly rather than reimplementing evidence handling for
+  a third time.
+- Two anti-hallucination checks enforced in code, not trusted from the
+  model:
+  - A persona's `evidence` ids are verified against the real board; one
+    with zero verifiable evidence is dropped entirely (raises
+    `FigJamAgentError`) rather than shown as if it were grounded.
+  - A claimed "verbatim" representative quote is checked against the
+    actual text of its cited evidence item (`_verify_quote()`) and
+    downgraded to "synthesized" if the quoted text doesn't really appear
+    there, regardless of what the model claimed.
+  - Profile fields (age/role/location/digital_behaviour) render as "Not
+    identified in research" whenever the model returns `null`, enforced
+    by `_clean_profile()` only ever trusting a real, non-empty string.
+- New layout module `figjam/persona_layout.py`, extending
+  `figma_layout.py`'s architecture rather than duplicating it: reuses the
+  same `figma_mcp_client.session()` / `create_section()` /
+  `create_stickies()` primitives already proven live for Push to FigJam.
+  One FigJam section per persona = one structured card (header, profile,
+  Goals | Pain points two-column, Behaviours | Needs two-column,
+  Motivations, Quote, Evidence), using the same validated
+  `figjam_create_stickies` color enum as the existing layout. Cards are
+  placed left to right with a fixed gap, not stacked or scattered.
+- Two new endpoints in `app.py`: `POST /api/figjam/generate-personas`
+  (runs synthesis + verification, stores result in `_figjam_state`) and
+  `POST /api/figjam/push-personas` (pushes the stored personas via the new
+  layout module) - mirrors the existing analyze/push-to-figjam route
+  pattern exactly.
+- Webapp UI: a "Generate Personas in FigJam" CTA (`.btn-featured`, same
+  treatment as the pairing/push CTAs from the prior commit), a status feed
+  ("Analyzing... Validating... Pushed to FigJam (checkmark)"), and persona
+  preview cards (name/avatar initials, profile line, two-column
+  goals/pain-points and behaviours/needs, motivations, quote with a
+  "synthesized statement" tag when not verbatim, confidence + evidence
+  chips) reusing the existing card/badge/`confidenceBadge()`/
+  `evidenceChips()` components from the prior grounding commit - no raw
+  JSON, internal ids, or MCP details exposed to the user.
+- Added a mock persona response to `llm_providers.py`'s `MockProvider` (two
+  personas grounded in the existing demo board's `N2`-`N4` and `N11`-`N12`
+  items) so the whole pipeline is exercisable offline, consistent with the
+  rest of the project's mock-provider convention.
+
+### What broke / what changed
+- Nothing broke in existing functionality; this is a pure extension
+  (`_figjam_state["personas"]` is a new key, reset to `None` alongside
+  `analysis` on every new connect, same lifecycle as the existing
+  `analysis` key).
+- Deliberately did not attempt to code-verify free-text profile claims
+  (e.g. that a stated "role" genuinely appears in the source text) beyond
+  requiring a real, non-empty string - general prose faithfulness is
+  prompt-enforced, the same trust level already extended to a theme's
+  "name" or an insight's "statement" text elsewhere in this pipeline. Only
+  the two specific, checkable claims (evidence ids existing, a quote being
+  literally verbatim) are verified in code. Documented this as an explicit
+  design parity decision, not an oversight, in `personas.py`'s docstring.
+
+### Test evidence
+- Added 7 new tests to `test_figjam.py`: persona grouping produces
+  evidence-backed output, evidence traces back to multiple distinct
+  participants, a persona with zero verifiable evidence is dropped,
+  unsupported demographic fields render as omitted/null (including a
+  non-string value and an empty string, both must not pass through),
+  a false "verbatim" claim is downgraded, the layout plan uses only valid
+  sticky colors and positions cards horizontally (not stacked), and an
+  empty persona list produces no cards.
+- `python webapp/backend/test_figjam.py`: 21/21 passing (14 prior + 7
+  new), confirming no regression to Pattern Analysis, FigJam
+  connect/analyze, or Push to FigJam.
+- **Live, end to end, through the real Flask routes** (mock LLM provider,
+  demo board - forced by clearing `FIGMA_ACCESS_TOKEN` for the local
+  process): `POST /api/figjam/connect` -> `/api/figjam/analyze` ->
+  `/api/figjam/generate-personas` returned two personas ("Priya, the Early
+  Arriver" from `N2`/`N3`/`N4`, confidence `strong`, participants
+  `P1`/`P3`/`P4`; "Devraj, the Planner" from `N11`/`N12`, confidence
+  `medium`, participants `P2`/`P4`), matching the demo board's actual
+  content. Manually confirmed with a fake provider that a persona citing
+  an invented evidence id is dropped entirely and a false verbatim quote
+  claim is downgraded, both live through `generate_personas()`, not just
+  in the unit tests.
+- Confirmed `POST /api/figjam/push-personas` fails cleanly (a clear
+  `FigmaMCPError` message, `502`, not a crash) when no
+  `FIGMA_ACCESS_TOKEN`/live Desktop Bridge connection is available in this
+  environment.
+- **Not tested:** the actual write landing on a real, live FigJam board
+  (needs Figma Desktop open with the Desktop Bridge plugin connected,
+  unavailable in this environment) - the MCP call path is identical to the
+  already-proven-live Push to FigJam, but the persona-specific layout
+  itself has not yet been visually confirmed on a real board.
