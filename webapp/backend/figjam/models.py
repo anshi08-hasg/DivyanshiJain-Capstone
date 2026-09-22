@@ -13,6 +13,24 @@ from typing import Any, Literal, Optional
 
 ResearchItemType = Literal["sticky", "text", "section", "group", "unknown"]
 
+# Section names ResearchMate itself creates when pushing its own output back
+# to the board (figma_layout.py's _SECTION_TITLES, persona_layout.py's
+# "Persona: <name>" cards). Confirmed live: after a Push to FigJam or Push
+# Personas, re-connecting to the same board reads those sections back as if
+# they were ordinary research - without this filter, a later Analyze or
+# Generate Personas call would be fed its own prior output as "evidence"
+# alongside the real participant research, silently compounding on itself.
+_RESEARCHMATE_OWN_SECTION_NAMES = {
+    "Themes", "Insights", "Contradictions", "Research Gaps", "Design Opportunities",
+}
+_RESEARCHMATE_OWN_SECTION_PREFIX = "Persona: "
+
+
+def _is_researchmate_own_section(name: str | None) -> bool:
+    if not name:
+        return False
+    return name in _RESEARCHMATE_OWN_SECTION_NAMES or name.startswith(_RESEARCHMATE_OWN_SECTION_PREFIX)
+
 
 @dataclass
 class ResearchItem:
@@ -43,6 +61,19 @@ class FigJamResearchContext:
             "participant_quotes": self.participant_quotes,
             "themes": self.themes,
         }
+
+    def primary_research_items(self) -> list[ResearchItem]:
+        """Items that are genuine participant research, excluding anything
+        that lives inside (or is itself) a section ResearchMate created from
+        its own prior output. Analysis and persona synthesis must both read
+        from this, not `self.items` directly, or a board that's already had
+        something pushed to it feeds the model its own earlier output as if
+        it were new evidence."""
+        return [
+            item for item in self.items
+            if not (item.type == "section" and _is_researchmate_own_section(item.content))
+            and not _is_researchmate_own_section(item.section)
+        ]
 
     def overview(self) -> dict[str, Any]:
         participants = {

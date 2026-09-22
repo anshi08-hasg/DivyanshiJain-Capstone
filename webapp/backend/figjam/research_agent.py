@@ -160,7 +160,11 @@ def _parse_json(raw: str) -> dict[str, Any]:
 
 
 def _valid_ids(context: FigJamResearchContext) -> set[str]:
-    return {item.id for item in context.items}
+    # Deliberately excludes ResearchMate's own previously-pushed sections
+    # (see FigJamResearchContext.primary_research_items) - citing one of
+    # those ids back is not real evidence, it's citing the app's own prior
+    # output.
+    return {item.id for item in context.primary_research_items()}
 
 
 def _verify_evidence(context: FigJamResearchContext, evidence_ids: list[str]) -> tuple[list[str], bool]:
@@ -201,7 +205,7 @@ def _evidence_confidence(context: FigJamResearchContext, verified_ids: list[str]
 
 def _context_prompt(context: FigJamResearchContext) -> str:
     lines = [f"Board: {context.board_name}", ""]
-    for item in context.items:
+    for item in context.primary_research_items():
         section = f" [{item.section}]" if item.section else ""
         lines.append(f"{item.id} ({item.type}){section}: {item.content}")
     return "\n".join(lines)

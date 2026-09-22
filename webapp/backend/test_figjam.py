@@ -49,6 +49,28 @@ def test_normalize_empty_board():
     assert context.overview()["research_items"] == 0
 
 
+def test_primary_research_items_excludes_researchmates_own_pushed_output():
+    # Confirmed live: re-connecting to a board that already had "Push to
+    # FigJam" or "Push Personas" run on it reads those sections back as
+    # ordinary sticky/text items with no distinguishing marker - without
+    # this filter, a later Analyze or Generate Personas call would be fed
+    # ResearchMate's own prior output as if it were new participant research.
+    context = normalize_board({
+        "board_name": "Test",
+        "raw_items": [
+            {"id": "N1", "type": "sticky", "content": "real participant research", "metadata": {"participant": "P1"}},
+            {"id": "N2", "type": "section", "content": "Themes"},
+            {"id": "N3", "type": "sticky", "content": "TH1: some prior AI-generated theme", "section": "Themes"},
+            {"id": "N4", "type": "section", "content": "Persona: Devraj, the Planner"},
+            {"id": "N5", "type": "sticky", "content": "GOALS", "section": "Persona: Devraj, the Planner"},
+        ],
+    })
+
+    primary = context.primary_research_items()
+    primary_ids = {i.id for i in primary}
+    assert primary_ids == {"N1"}, "only genuine participant research should remain, not the app's own prior sections/output"
+
+
 def test_connect_board_rejects_empty_board(monkeypatch):
     import figjam.research_agent as agent_module
 
@@ -283,7 +305,25 @@ def test_persona_with_no_verifiable_evidence_is_dropped(monkeypatch):
         generate_personas(context, None)
         raise AssertionError("a persona with zero verifiable evidence must not be returned")
     except FigJamAgentError as exc:
-        assert "evidence-backed" in str(exc).lower()
+        message = str(exc).lower()
+        assert "evidence-backed" in message
+        # The failure must explain WHY (actual participant/item/candidate
+        # counts), not just repeat a generic "couldn't form a persona" line,
+        # so a real failure is diagnosable from the error message alone.
+        assert "3 participant(s)" in str(exc)
+        assert "1 candidate persona(s)" in str(exc)
+
+
+def test_persona_empty_board_gives_a_specific_reason_not_a_generic_one(monkeypatch):
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    monkeypatch.setattr(personas_module, "get_provider", lambda: _FakePersonaProvider({"personas": []}))
+
+    try:
+        generate_personas(context, None)
+        raise AssertionError("an empty candidate list must still raise")
+    except FigJamAgentError as exc:
+        assert "did not propose any persona groupings" in str(exc)
+        assert "3 participant(s)" in str(exc)
 
 
 def test_persona_unsupported_demographic_claim_is_omitted(monkeypatch):

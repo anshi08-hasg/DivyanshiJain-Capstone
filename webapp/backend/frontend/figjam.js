@@ -446,19 +446,33 @@ generatePersonasBtn.addEventListener("click", async () => {
   personasStatusList.hidden = true;
   setBusy(generatePersonasBtn, true, "Generate Personas in FigJam");
 
+  const items = Object.values(state.items);
+  const participantCount = new Set(
+    items.map((i) => i.metadata && i.metadata.participant).filter(Boolean)
+  ).size;
+  const researchItemCount = items.filter((i) => i.type !== "section").length;
+
   try {
-    appendStatusStep("Analyzing research and grouping participants...");
+    appendStatusStep(`✓ Research loaded (${researchItemCount} research item(s))`);
+    appendStatusStep(`✓ Participants identified (${participantCount})`);
+    appendStatusStep("→ Sending to Gemini for behavioural clustering...");
+
     const res = await fetch(apiUrl("/api/figjam/generate-personas"), { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Could not generate personas.");
 
-    appendStatusStep("Validating persona claims against research evidence...");
+    // Replace the optimistic pre-request steps with the backend's real,
+    // just-executed activity trail (counts of candidates/drops are computed
+    // server-side from the actual Gemini response, not guessed here).
+    personasStatusList.innerHTML = "";
+    (data.activity || []).slice(-4).forEach((entry) => appendStatusStep(`✓ ${entry.label}`));
+
     state.personas = data.personas || [];
     state.personas.forEach((p) => personasList.appendChild(renderPersonaCard(p)));
-    appendStatusStep(`${state.personas.length} evidence-backed persona(s) ready`);
 
     pushPersonasBar.hidden = false;
   } catch (err) {
+    appendStatusStep(`✗ ${err.message}`);
     personasError.textContent = err.message;
     personasError.hidden = false;
   } finally {

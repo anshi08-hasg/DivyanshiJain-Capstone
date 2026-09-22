@@ -104,7 +104,7 @@ commentary, matching exactly this schema:
 
 def _persona_context_prompt(context: FigJamResearchContext) -> str:
     lines = [f"Board: {context.board_name}", ""]
-    for item in context.items:
+    for item in context.primary_research_items():
         if item.type == "section":
             continue
         section = f" [{item.section}]" if item.section else ""
@@ -196,10 +196,26 @@ def generate_personas(context: FigJamResearchContext, analysis: dict[str, Any] |
         activity.append(_step(f"Dropped {dropped} candidate persona(s) with no verifiable evidence"))
 
     if not personas:
-        raise FigJamAgentError(
-            "Could not form any evidence-backed persona from the connected research. "
-            "This usually means there isn't enough research yet, or the participants "
-            "in it are too dissimilar to group meaningfully."
-        )
+        research_items = context.primary_research_items()
+        participant_count = len({
+            i.metadata.get("participant") for i in research_items if i.metadata.get("participant")
+        })
+        item_count = len([i for i in research_items if i.type != "section"])
+
+        if not candidates:
+            reason = (
+                f"{participant_count} participant(s) and {item_count} research item(s) were read "
+                "from the board, but the model did not propose any persona groupings from them - "
+                "this usually means the research doesn't show enough of a behavioural pattern to "
+                "cluster participants around."
+            )
+        else:
+            reason = (
+                f"{participant_count} participant(s) and {item_count} research item(s) were read "
+                f"from the board, and {len(candidates)} candidate persona(s) were proposed, but "
+                "none of them cited research item ids that actually exist on the board, so none "
+                "could be verified as evidence-backed."
+            )
+        raise FigJamAgentError(reason)
 
     return {"personas": personas, "activity": activity}
