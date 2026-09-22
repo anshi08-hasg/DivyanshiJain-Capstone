@@ -502,6 +502,34 @@ def test_get_provider_gemini_api_key_alone_has_no_effect(monkeypatch):
     assert provider.__class__.__name__ == "MockProvider"
 
 
+def test_extract_failed_generation_recovers_groq_json_validate_failed(monkeypatch):
+    # Confirmed live: Groq's openai/gpt-oss-120b occasionally rejects its own
+    # json_object output with code "json_validate_failed" even when the
+    # generated text is valid JSON on inspection. The openai SDK's
+    # exc.body is the FLAT error object (code/failed_generation at the top
+    # level), not wrapped in {"error": {...}} - only str(exc)'s human-text
+    # wraps it that way. This must match the real shape, not the display text.
+    from llm_providers import _extract_failed_generation
+
+    class FakeGroqError(Exception):
+        def __init__(self, body):
+            self.body = body
+
+    real_shape = FakeGroqError({
+        "message": "Failed to validate JSON. Please adjust your prompt.",
+        "type": "invalid_request_error",
+        "code": "json_validate_failed",
+        "failed_generation": '{"themes": [{"id": "TH1", "name": "x", "evidence": [], "strength": "weak", "rationale": null}]}',
+    })
+    assert _extract_failed_generation(real_shape) == real_shape.body["failed_generation"]
+
+    assert _extract_failed_generation(FakeGroqError({"code": "json_validate_failed", "failed_generation": ""})) is None, \
+        "an empty failed_generation has nothing to recover"
+    assert _extract_failed_generation(FakeGroqError({"code": "rate_limit_exceeded", "failed_generation": "x"})) is None, \
+        "must only recover this specific error code, not swallow unrelated failures"
+    assert _extract_failed_generation(ValueError("not an API error, no .body at all")) is None
+
+
 def _run_all():
     import inspect
     import sys

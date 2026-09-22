@@ -57,15 +57,48 @@ class OpenAIProvider(LLMProvider):
         # object" instruction unaided - every system prompt in this project
         # already contains the word "json" (required by this mode) as part
         # of its own output-format instructions.
-        response = self._client.chat.completions.create(
-            model=self._model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        return response.choices[0].message.content
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                response_format={"type": "json_object"},
+                messages=messages,
+            )
+            return response.choices[0].message.content
+        except Exception as exc:  # noqa: BLE001
+            # Confirmed live against Groq's openai/gpt-oss-120b: its own
+            # json_object grammar-constrained decoding occasionally rejects
+            # output that is, on inspection, genuinely valid JSON (error
+            # code "json_validate_failed"). The API still returns that exact
+            # generated text in the error body's "failed_generation" field,
+            # so recover it directly instead of failing the whole request -
+            # the caller's own _parse_json already validates it independently.
+            recovered = _extract_failed_generation(exc)
+            if recovered is not None:
+                return recovered
+            raise
+
+
+def _extract_failed_generation(exc: Exception) -> str | None:
+    """Pulls the model's raw text out of a Groq json_validate_failed error
+    body, if that's what this is. Returns None for any other kind of error
+    (missing/invalid key, rate limit, real malformed output, etc.), which
+    the caller re-raises unchanged.
+
+    Confirmed live against a real Groq 400 response: the openai SDK's
+    exc.body is the flat error object itself (code/message/failed_generation
+    at the top level), NOT wrapped in an outer {"error": {...}} - that
+    wrapper only appears in str(exc)'s human-readable text, not in .body.
+    An earlier version of this function assumed the wrapped shape and would
+    have silently returned None (never recovering) against a real error."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict) or body.get("code") != "json_validate_failed":
+        return None
+    text = body.get("failed_generation")
+    return text or None
 
 
 class MockProvider(LLMProvider):
