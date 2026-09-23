@@ -305,6 +305,35 @@ async def apply_card_finish(sess: ClientSession, node_ids: list[str]) -> dict[st
     return _unwrap(result)
 
 
+async def set_text_fill(sess: ClientSession, node_ids: list[str], hex_color: str) -> dict[str, Any]:
+    """Forces a shape's TEXT color via figma_execute. Confirmed live:
+    figjam_create_shape_with_text's textColor parameter mishandled a pure
+    white (#FFFFFF) value - the shape's own background came back the
+    requested dark color correctly, but its text fill came back black at
+    0.8 opacity instead of white, making the text almost invisible against
+    a dark background. Darker textColor values (e.g. #222222) were
+    observed working correctly when passed directly, so this is only
+    needed as a targeted fix for specific problem colors, not universally."""
+    if not node_ids:
+        return {}
+    r, g, b = (int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    ids_json = json.dumps(node_ids)
+    code = f"""
+    const ids = {ids_json};
+    let updated = 0;
+    for (const id of ids) {{
+      const node = await figma.getNodeByIdAsync(id);
+      if (node && node.text) {{
+        node.text.fills = [{{ type: "SOLID", color: {{ r: {r}, g: {g}, b: {b} }} }}];
+        updated++;
+      }}
+    }}
+    return {{ requested: ids.length, updated }};
+    """
+    result = await sess.call_tool("figma_execute", {"code": code})
+    return _unwrap(result)
+
+
 async def set_image_fill(sess: ClientSession, node_id: str, image_bytes: bytes) -> dict[str, Any]:
     """Fills a node with the given raw image bytes. Confirmed live: this
     tool's real parameters are nodeIds (an array) and imageData (a base64

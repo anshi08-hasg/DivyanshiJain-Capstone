@@ -74,6 +74,7 @@ PERSONA_TEMPLATE: dict[str, Any] = {
     "identity_panel": {"x": 0, "y": 413, "width": 420, "height": 247, "color": "#111111"},
     "name": {"x": 34, "y": 480, "width": 352, "height": 44, "font_size": 28},
     "role": {"x": 34, "y": 535, "width": 352, "height": 28, "font_size": 17},
+    "profile": {"x": 34, "y": 579, "width": 352, "height": 110, "font_size": 13},
     "right_content": {"x": 420, "y": 0, "width": 780, "height": 660, "padding": 42},
     "quote": {"x": 462, "y": 38, "width": 690, "height": 167, "font_size": 26},
     "divider": {"x": 462, "y": 205, "width": 690, "height": 2, "color": "#D9D9D9"},
@@ -116,7 +117,7 @@ _GRID_CHARS_PER_LINE = 24  # empirically measured against real rendered screensh
 _GRID_LINE_HEIGHT = 18
 _GRID_ITEM_GAP = 8
 _GRID_BODY_PADDING = 16
-_GRID_MIN_BODY_HEIGHT = 120
+_GRID_MIN_BODY_HEIGHT = 190  # ensures the identity panel is always tall enough for the profile zone below role
 _GRID_MAX_CHARS_EACH = 220  # a safety ceiling only, not meant to actually trigger - items are already short phrases
 
 # The smallest a card's grid can be (all three columns at their minimum
@@ -151,6 +152,16 @@ def _column_body_height(items: list[str]) -> float:
         _GRID_MIN_BODY_HEIGHT,
         _GRID_BODY_PADDING * 2 + lines * _GRID_LINE_HEIGHT + max(0, len(items) - 1) * _GRID_ITEM_GAP,
     )
+
+
+def _profile_text(profile: dict[str, Any]) -> str:
+    profile = profile or {}
+    return "\n".join([
+        f"Role: {profile.get('role') or _NOT_IDENTIFIED}",
+        f"Age: {profile.get('age') or _NOT_IDENTIFIED}",
+        f"Location: {profile.get('location') or _NOT_IDENTIFIED}",
+        f"Digital behaviour: {profile.get('digital_behaviour') or _NOT_IDENTIFIED}",
+    ])
 
 
 def _quote_text(quote: dict[str, Any]) -> str:
@@ -231,6 +242,15 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
         "textColor": _BODY_COLOR, "fontSize": role_spec["font_size"], "cornerRadius": 0,
     })
 
+    profile_spec = t["profile"]
+    shapes.append({
+        "text": _profile_text(persona.get("profile")),
+        "x": x + profile_spec["x"], "y": y + profile_spec["y"],
+        "width": profile_spec["width"], "height": profile_spec["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": t["identity_panel"]["color"],
+        "textColor": _WHITE, "fontSize": profile_spec["font_size"], "cornerRadius": 0,
+    })
+
     quote_spec = t["quote"]
     shapes.append({
         "text": _quote_text(persona.get("representative_quote") or {}),
@@ -298,9 +318,11 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     # realistic person" instruction, while still visually filling the box
     # rather than leaving it empty.
     photo_shape_index = 1
+    profile_shape_index = 5
     return {
         "x": x, "y": y, "width": CARD_WIDTH, "height": total_height, "shapes": shapes,
-        "photo_shape_index": photo_shape_index, "persona_name": persona.get("name", "Unnamed persona"),
+        "photo_shape_index": photo_shape_index, "profile_shape_index": profile_shape_index,
+        "persona_name": persona.get("name", "Unnamed persona"),
     }
 
 
@@ -433,6 +455,7 @@ async def push_personas_to_figjam(personas: list[dict[str, Any]]) -> dict[str, A
         activity.append(f"Created section '{section['title']}'")
 
         created_node_ids: list[str] = []
+        profile_node_ids: list[str] = []
         for i, card in enumerate(plan["cards"]):
             persona_name = personas[i].get("name", "Unnamed persona")
             photo_node_id = None
@@ -442,6 +465,8 @@ async def push_personas_to_figjam(personas: list[dict[str, Any]]) -> dict[str, A
                     created_node_ids.append(result["node_id"])
                     if shape_index == card["photo_shape_index"]:
                         photo_node_id = result["node_id"]
+                    if shape_index == card["profile_shape_index"]:
+                        profile_node_ids.append(result["node_id"])
                 created_shapes += 1
             activity.append(f"Created persona card '{persona_name}' ({len(card['shapes'])} elements)")
 
@@ -457,6 +482,14 @@ async def push_personas_to_figjam(personas: list[dict[str, Any]]) -> dict[str, A
         # real plugin API instead, one batched call.
         if created_node_ids:
             await mcp_client.apply_card_finish(sess, created_node_ids)
+
+        # Same story for the profile zone's text color: textColor="#FFFFFF"
+        # came back as black text at 0.8 opacity (confirmed live via
+        # figma_execute inspection), nearly invisible against the dark
+        # panel - fixed directly through the plugin API.
+        if profile_node_ids:
+            await mcp_client.set_text_fill(sess, profile_node_ids, "#FFFFFF")
+            activity.append(f"Fixed profile text color on {len(profile_node_ids)} element(s)")
             activity.append(f"Applied sharp corners and removed default strokes on {len(created_node_ids)} element(s)")
 
     return {

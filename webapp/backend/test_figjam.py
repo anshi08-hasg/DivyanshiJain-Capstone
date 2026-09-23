@@ -483,7 +483,7 @@ def test_persona_card_locks_top_section_but_grows_grid_for_content():
 
     # Photo, name, role, quote, divider, and background stay at the exact
     # same position/size regardless of content - only their text may differ.
-    locked_indices = (1, 3, 4, 5, 6, 7, 8)  # photo, name, role, quote, divider, bg_heading, bg_body
+    locked_indices = (1, 3, 4, 5, 6, 7, 8, 9)  # photo, name, role, profile, quote, divider, bg_heading, bg_body
     for i in locked_indices:
         s1, s2 = card_tiny["shapes"][i], card_maxed["shapes"][i]
         assert s1["x"] == s2["x"] and s1["y"] == s2["y"]
@@ -497,7 +497,7 @@ def test_persona_card_locks_top_section_but_grows_grid_for_content():
     # The grid's bullet text, by contrast, must NOT be aggressively cut -
     # "write full things" means the actual finding survives close to intact.
     long_goal = maxed["goals"][0]
-    grid_body_text = card_maxed["shapes"][10]["text"]  # goals: [9]=heading "GOALS", [10]=body
+    grid_body_text = card_maxed["shapes"][11]["text"]  # goals: [10]=heading "GOALS", [11]=body
     assert long_goal[:40] in grid_body_text, "grid content must not be truncated away, only the header section is"
 
 
@@ -531,6 +531,22 @@ def test_persona_card_name_and_role_are_white_label_boxes():
     assert role_shape["textColor"] != "#FFFFFF"
 
 
+def test_persona_card_includes_profile_fields_shown_in_webapp_preview():
+    # The webapp preview already shows Role/Age/Location/Digital behaviour
+    # (figjam.js's confidenceBadge/profile rendering) - the FigJam card had
+    # dropped this zone entirely during the pixel-template rebuild; this
+    # locks in that it's back and shows unsupported fields honestly rather
+    # than inventing them.
+    persona = _make_test_personas(1)[0]
+    persona["profile"] = {"role": "Host", "age": "21", "location": None, "digital_behaviour": None}
+    card = _build_card_for_test(persona, 0, 0)
+    profile_shape = card["shapes"][5]  # right_bg, photo, panel, name, role, profile
+    assert "Role: Host" in profile_shape["text"]
+    assert "Age: 21" in profile_shape["text"]
+    assert "Location: Not identified in research" in profile_shape["text"]
+    assert "Digital behaviour: Not identified in research" in profile_shape["text"]
+
+
 def test_persona_grid_body_grows_with_more_and_longer_content():
     from figjam.persona_layout import _column_body_height
 
@@ -538,6 +554,8 @@ def test_persona_grid_body_grows_with_more_and_longer_content():
     long_items = _column_body_height([
         "A much longer research finding that will need to wrap across multiple lines within the column",
         "Another substantial finding that also needs real space to display without being cut short",
+        "A third distinct point raised independently by more than one participant in the research",
+        "A fourth finding, since real personas can have up to four bullets per section here",
     ])
     assert long_items > short, "more/longer content must grow the body height, not get truncated to fit a fixed box"
 
