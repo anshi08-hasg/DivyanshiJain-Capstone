@@ -201,7 +201,8 @@ _MOCK_FIGJAM_PERSONAS_RESPONSE = """
   "personas": [
     {
       "id": "PERSONA1",
-      "name": "Priya, the Early Arriver",
+      "name": "The Early Arriver",
+      "archetype": "Proactive space claimer",
       "short_description": "A student who treats quiet study space as something you have to claim early, not something that's simply available.",
       "profile": {"role": "Student", "age": null, "location": null, "digital_behaviour": null},
       "goals": ["Find a quiet, reliable place to study during exam weeks", "Avoid wasting time hunting for space"],
@@ -214,7 +215,8 @@ _MOCK_FIGJAM_PERSONAS_RESPONSE = """
     },
     {
       "id": "PERSONA2",
-      "name": "Devraj, the Planner",
+      "name": "The Planner",
+      "archetype": "Advance-booking organizer",
       "short_description": "A student who books group spaces ahead of time rather than risk showing up to nothing available.",
       "profile": {"role": "Student", "age": null, "location": null, "digital_behaviour": "Books rooms online in advance"},
       "goals": ["Guarantee a group room is available for project meetings"],

@@ -14,7 +14,7 @@ from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidenc
 from figjam.figma_layout import build_layout_plan
 from figjam import personas as personas_module
 from figjam.personas import generate_personas
-from figjam.persona_layout import build_persona_layout_plan, _validate_layout
+from figjam.persona_layout import build_persona_layout_plan, _validate_layout, _build_card as _build_card_for_test
 from figjam.layout_geometry import Rect, rects_overlap, find_overlap, assert_no_overlaps, bounding_box, grid_positions
 from llm_providers import OpenAIProvider, get_provider
 
@@ -455,6 +455,60 @@ def test_persona_layout_plan_empty_list_produces_no_cards():
     plan = build_persona_layout_plan([])
     assert plan["cards"] == []
     assert plan["section"] is None
+
+
+def test_persona_card_uses_locked_fixed_template_regardless_of_content():
+    # The core new requirement: card size and every element's position must
+    # be IDENTICAL across personas, whether one has almost no content and
+    # another has the maximum. Only the text inside changes.
+    from figjam.persona_layout import PERSONA_TEMPLATE
+
+    tiny = {
+        "id": "P1", "name": "A", "archetype": "", "short_description": "",
+        "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
+        "representative_quote": {"text": "", "is_verbatim": False, "source_id": None}, "evidence": [],
+    }
+    maxed = _make_test_personas(1, content_size=10)[0]
+    maxed["short_description"] = "x" * 500
+    maxed["representative_quote"] = {"text": "y" * 400, "is_verbatim": False, "source_id": None}
+
+    card_tiny = _build_card_for_test(tiny, 0, 0)
+    card_maxed = _build_card_for_test(maxed, 0, 0)
+
+    assert card_tiny["width"] == card_maxed["width"] == 1200
+    assert card_tiny["height"] == card_maxed["height"] == 660
+    assert card_tiny["width"] == PERSONA_TEMPLATE["width"]
+    assert card_tiny["height"] == PERSONA_TEMPLATE["height"]
+
+    # Every shape's position/size must match exactly between the two cards -
+    # only "text" may differ.
+    for s1, s2 in zip(card_tiny["shapes"], card_maxed["shapes"]):
+        assert s1["x"] == s2["x"] and s1["y"] == s2["y"]
+        assert s1["width"] == s2["width"] and s1["height"] == s2["height"]
+        assert s1["shapeType"] == s2["shapeType"]
+
+    # Long content must be truncated to fit, not overflow the fixed zones -
+    # no shape's text should come out absurdly long.
+    for shape in card_maxed["shapes"]:
+        assert len(shape["text"]) < 400, "content must be truncated to fit the fixed template, not left to overflow"
+
+
+def test_persona_card_photo_and_identity_panel_use_sharp_corners():
+    card = _build_card_for_test(_make_test_personas(1)[0], 0, 0)
+    for shape in card["shapes"]:
+        assert shape.get("cornerRadius") == 0, "every persona-card shape must use sharp (non-rounded) corners"
+
+
+def test_persona_card_name_is_not_a_participant_id():
+    # "name" must be the behavioural archetype, never a raw participant id
+    # like "P1" - this is enforced by the generation prompt (personas.py),
+    # this test just locks in that the layout renders whatever name string
+    # it's given without silently falling back to something participant-like.
+    persona = _make_test_personas(1)[0]
+    persona["name"] = "The Host"
+    card = _build_card_for_test(persona, 0, 0)
+    name_shape = card["shapes"][3]  # right_bg, photo, panel, name
+    assert name_shape["text"] == "The Host"
 
 
 def test_persona_layout_no_overlaps_at_scale():

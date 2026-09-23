@@ -54,6 +54,11 @@ UX knowledge, demographic assumptions, or what a typical user of this kind
 of product might be like.
 
 Rules:
+- "name" must be a behavioural archetype label (e.g. "The Reluctant Host",
+  "The Vibe-Driven Guest"), NEVER a human person's name and NEVER any
+  participant's real name from the research.
+- "archetype" is a short (3-6 word) tagline describing the behavioural role
+  this persona plays (e.g. "Social music controller", "Laid-back listener").
 - "evidence" must list the exact item ids (e.g. "N3") that support this
   persona as a group. Never invent an id, a participant, or a quote that was
   not given to you.
@@ -81,7 +86,8 @@ commentary, matching exactly this schema:
   "personas": [
     {
       "id": "PERSONA1",
-      "name": "string, realistic but clearly fictional",
+      "name": "string, a behavioural archetype label, never a human name",
+      "archetype": "string, 3-6 word tagline",
       "short_description": "string, 1-2 sentences",
       "profile": {
         "role": "string or null",
@@ -179,6 +185,7 @@ def generate_personas(context: FigJamResearchContext, analysis: dict[str, Any] |
         personas.append({
             "id": candidate.get("id", f"PERSONA{len(personas) + 1}"),
             "name": candidate.get("name", "Unnamed persona"),
+            "archetype": candidate.get("archetype", ""),
             "short_description": candidate.get("short_description", ""),
             "profile": _clean_profile(candidate.get("profile")),
             "goals": [g for g in candidate.get("goals", []) if isinstance(g, str) and g.strip()],

@@ -1,26 +1,22 @@
 """Turns ResearchMate's persona-synthesis output into a FigJam layout and
 pushes it via figma_mcp_client - the same MCP client figma_layout.py already
-uses for Themes/Insights/etc, extended with one more real tool discovered
-live on the connected server: figjam_create_shape_with_text (a labeled,
-custom-sized, custom-colored shape). Personas are built from this, NOT
-figjam_create_stickies, per the explicit "persona = card, not sticky note"
-requirement - a sticky note is a fixed 240x240 square (confirmed live,
-width/height params are silently ignored), which can't hold a structured
-multi-zone card layout at all.
+uses for Themes/Insights/etc, extended with figjam_create_shape_with_text
+(a labeled, custom-sized, custom-colored shape, discovered live via
+list_tools()). Personas are built from this, NEVER figjam_create_stickies
+(a fixed 240x240 sticky note, confirmed live - width/height are ignored).
 
-Persona card = a left "identity" sidebar (name, description, profile - dark
-accent fill, white text) spanning the card's full height, next to a
-right-hand main content area (Quote, Goals, Pain points, Behaviours, Needs,
-Motivations, Evidence) in restrained near-white zones - the one strong
-accent color carries the hierarchy instead of a different pastel per zone,
-matching professional persona-card references (identity panel + neutral
-content) rather than a rainbow of category colors.
+LOCKED TEMPLATE: every persona card uses the exact same 1200x660 canvas,
+the same column widths, the same element positions, and the same
+typography, regardless of how much content a given persona has. Only the
+CONTENT varies (per explicit instruction: "the layout does NOT adapt to
+the content" - content is summarized/truncated to fit the fixed template
+instead of the template growing to fit the content). See PERSONA_TEMPLATE
+below for the single source of truth for every measurement.
 
 All cards live inside one real FigJam section titled "User personas",
-positioned dynamically clear of EVERY node already on the connected board -
-not just other ResearchMate sections, but the original primary-research
-stickies too (read live before pushing - see
-_find_existing_content_right_edge), never at a hardcoded coordinate.
+positioned dynamically clear of EVERY node already on the connected board
+(read live before pushing - see _find_existing_content_right_edge), never
+at a hardcoded coordinate.
 """
 
 from __future__ import annotations
@@ -32,186 +28,194 @@ from .layout_geometry import Rect, assert_no_overlaps, bounding_box, find_overla
 
 _NOT_IDENTIFIED = "Not identified in research"
 
-# Card geometry. Two fixed columns per row, matching the exact layouts asked
-# for (2 personas side by side, 3 as 2+1, 4 as 2x2) rather than a
-# width-adaptive column count - simpler, predictable, and matches every
-# example given.
-CARD_WIDTH = 680
-SIDEBAR_WIDTH = 220
-CARD_PADDING = 24
-COLUMN_GAP = 20
-MAIN_AREA_WIDTH = CARD_WIDTH - CARD_PADDING * 2 - COLUMN_GAP - SIDEBAR_WIDTH
-COLUMN_WIDTH = (MAIN_AREA_WIDTH - COLUMN_GAP) // 2
-ROW_GAP = 16
+# Single source of truth for every persona-card measurement. Fixed per the
+# explicit "same template every time" requirement - nothing here is derived
+# from how much content a persona happens to have.
+PERSONA_TEMPLATE: dict[str, Any] = {
+    "width": 1200,
+    "height": 660,
+    "left_column_width": 420,
+    "right_column_width": 780,
+    "photo": {"x": 0, "y": 0, "width": 420, "height": 413, "color": "#E8E8E8"},
+    "identity_panel": {"x": 0, "y": 413, "width": 420, "height": 247, "color": "#111111"},
+    "name": {"x": 34, "y": 480, "width": 352, "height": 44, "font_size": 28},
+    "role": {"x": 34, "y": 535, "width": 352, "height": 28, "font_size": 17},
+    "right_content": {"x": 420, "y": 0, "width": 780, "height": 660, "padding": 42},
+    "quote": {"x": 462, "y": 38, "width": 690, "height": 167, "font_size": 26},
+    "divider": {"x": 462, "y": 205, "width": 690, "height": 2, "color": "#D9D9D9"},
+    "background_heading": {"x": 462, "y": 215, "width": 690, "height": 24, "font_size": 18},
+    "background_body": {"x": 462, "y": 247, "width": 690, "height": 90, "font_size": 15},
+    "grid": {"y": 362, "column_width": 205, "gap": 25, "heading_height": 24, "body_height": 190, "font_size_heading": 17, "font_size_body": 14},
+    "evidence": {"x": 462, "y": 598, "width": 690, "height": 20, "font_size": 13},
+    "gaps": {"persona_to_persona": 80, "section": 25, "bullet": 10},
+}
+
+_HEADING_COLOR = "#222222"
+_BODY_COLOR = "#333333"
+_MUTED_COLOR = "#8A8A8A"
+_WHITE = "#FFFFFF"
+
+CARD_WIDTH = PERSONA_TEMPLATE["width"]
+CARD_HEIGHT = PERSONA_TEMPLATE["height"]
 CARDS_PER_ROW = 2
-CARD_GAP_X = 60
-CARD_GAP_Y = 60
+CARD_GAP_X = PERSONA_TEMPLATE["gaps"]["persona_to_persona"]
+CARD_GAP_Y = PERSONA_TEMPLATE["gaps"]["persona_to_persona"]
 SECTION_PADDING = 48
 SECTION_GAP = 120  # clearance kept between existing board content and the new Personas section
-
-_LINE_HEIGHT = 20
-_ZONE_LABEL_HEIGHT = 24
-_ZONE_PADDING = 16
-_MIN_ZONE_HEIGHT = 80
-_QUOTE_HEIGHT = 110
-_EVIDENCE_HEIGHT = 60
-
-# One strong accent (the sidebar) carries the hierarchy; every content zone
-# stays a near-neutral off-white so the card reads as "restrained UX board",
-# not "a different pastel per category" - reusing the product's own accent
-# green (style.css's --accent/--accent-strong) rather than inventing a new
-# persona-only color scheme.
-_SIDEBAR_COLOR = "#1F6F4A"
-_SIDEBAR_TEXT_COLOR = "#FFFFFF"
-_ZONE_COLOR = "#FAFAFA"
-_EVIDENCE_COLOR = "#F1F1F3"
-_CARD_BACKGROUND_COLOR = "#FFFFFF"
-
-_SIDEBAR_FONT_SIZE = 13
-_ZONE_FONT_SIZE = 12
-_QUOTE_FONT_SIZE = 13
 
 _PERSONAS_SECTION_TITLE = "User personas"
 
 
-def _zone_height(line_count: int) -> int:
-    return max(_MIN_ZONE_HEIGHT, _ZONE_PADDING * 2 + _ZONE_LABEL_HEIGHT + line_count * _LINE_HEIGHT)
+def _truncate(text: str, max_chars: int) -> str:
+    """Content is shortened to fit the fixed template rather than resizing
+    the template to fit the content, per the explicit "first shorten the
+    content intelligently, do NOT shrink font, do NOT change card
+    dimensions" rule. Cuts at a word boundary where possible."""
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars].rsplit(" ", 1)[0]
+    return (cut or text[:max_chars]).rstrip(",.;:") + "…"
 
 
-def _zone_text(label: str, lines: list[str]) -> str:
-    body = "\n".join(f"- {line}" for line in (lines or [_NOT_IDENTIFIED]))
-    return f"{label.upper()}\n{body}"
-
-
-def _sidebar_text(persona: dict[str, Any]) -> str:
-    profile = persona.get("profile") or {}
-    lines = [
-        persona.get("name", "Unnamed persona"),
-        "",
-        persona.get("short_description", ""),
-        "",
-        f"Role: {profile.get('role') or _NOT_IDENTIFIED}",
-        f"Age: {profile.get('age') or _NOT_IDENTIFIED}",
-        f"Location: {profile.get('location') or _NOT_IDENTIFIED}",
-        f"Digital behaviour: {profile.get('digital_behaviour') or _NOT_IDENTIFIED}",
-    ]
-    return "\n".join(lines)
-
-
-def _sidebar_line_count(persona: dict[str, Any]) -> int:
-    # name + blank + description + blank + 4 profile lines = 8, plus extra
-    # lines if the description wraps beyond the width estimate below.
-    description = persona.get("short_description", "")
-    wrapped_lines = max(1, -(-len(description) // 28))  # ~28 chars/line at this width/font size
-    return 4 + wrapped_lines + 4
+def _bulleted(items: list[str], max_items: int, max_chars_each: int) -> str:
+    items = [i for i in (items or []) if i and i.strip()][:max_items] or [_NOT_IDENTIFIED]
+    return "\n".join(f"• {_truncate(i, max_chars_each)}" for i in items)
 
 
 def _quote_text(quote: dict[str, Any]) -> str:
     text = (quote or {}).get("text", "").strip()
     if not text:
-        return "“ No representative quote identified in research. ”"
+        return "“ No representative statement identified in research. ”"
+    body = _truncate(text, 180)
     if quote.get("is_verbatim"):
-        return f'“ {text} ”\n— {quote.get("source_id", "")}'
-    return f'“ {text} ”\n(synthesized statement, not a direct quote)'
+        return f"“ {body} ”\n— {quote.get('source_id', '')}"
+    return f"“ {body} ”\n(synthesized statement, not a direct quote)"
 
 
 def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
-    """Returns {"x", "y", "width", "height", "shapes": [...]}. `shapes` is
-    ordered background-first so later (foreground) shapes are created after
-    it - FigJam stacks newly-created nodes above existing ones, so creation
-    order doubles as z-order here.
+    """Returns {"x", "y", "width", "height", "shapes": [...]} using the fixed
+    PERSONA_TEMPLATE geometry - x, y is the card's own origin; every element
+    below is that origin plus a fixed template offset, never a value derived
+    from this persona's own content length."""
+    t = PERSONA_TEMPLATE
+    shapes: list[dict[str, Any]] = []
 
-    Layout: a left "identity" sidebar (name, description, profile - one
-    strong accent color, white text) spans the card's full height next to a
-    right-hand main content area (Quote, Goals/Pain points, Behaviours/Needs,
-    Motivations, Evidence) in restrained near-white zones."""
-    goals = persona.get("goals") or []
-    pain_points = persona.get("pain_points") or []
-    behaviours = persona.get("behaviours") or []
-    needs = persona.get("needs") or []
-    motivations = persona.get("motivations") or []
+    def rect(key: str) -> dict[str, float]:
+        spec = t[key]
+        return {"x": x + spec["x"], "y": y + spec["y"], "width": spec["width"], "height": spec["height"]}
 
-    row1_height = max(_zone_height(len(goals) or 1), _zone_height(len(pain_points) or 1))
-    row2_height = max(_zone_height(len(behaviours) or 1), _zone_height(len(needs) or 1))
-    motivations_height = _zone_height(len(motivations) or 1)
-
-    main_content_height = (
-        _QUOTE_HEIGHT + ROW_GAP + row1_height + ROW_GAP + row2_height + ROW_GAP
-        + motivations_height + ROW_GAP + _EVIDENCE_HEIGHT
-    )
-    sidebar_height = max(main_content_height, _ZONE_PADDING * 2 + _sidebar_line_count(persona) * _LINE_HEIGHT)
-    card_height = CARD_PADDING * 2 + max(main_content_height, sidebar_height)
-
-    shapes = [{
-        "text": "", "x": x, "y": y, "width": CARD_WIDTH, "height": card_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _CARD_BACKGROUND_COLOR,
-    }]
-
-    left_x = x + CARD_PADDING
-    right_x = left_x + SIDEBAR_WIDTH + COLUMN_GAP
-    right_col_x = right_x + COLUMN_WIDTH + COLUMN_GAP
-
+    # z-order: backgrounds first, then everything layered on top of them.
+    right = t["right_content"]
     shapes.append({
-        "text": _sidebar_text(persona), "x": left_x, "y": y + CARD_PADDING,
-        "width": SIDEBAR_WIDTH, "height": card_height - CARD_PADDING * 2,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _SIDEBAR_COLOR,
-        "textColor": _SIDEBAR_TEXT_COLOR, "fontSize": _SIDEBAR_FONT_SIZE,
+        "text": "", "x": x + right["x"], "y": y + right["y"], "width": right["width"], "height": right["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE, "cornerRadius": 0,
     })
 
-    cursor_y = y + CARD_PADDING
+    photo = rect("photo")
+    shapes.append({
+        "text": "", **photo, "shapeType": "ROUNDED_RECTANGLE",
+        "fillColor": t["photo"]["color"], "cornerRadius": 0,
+    })
+
+    panel = rect("identity_panel")
+    shapes.append({
+        "text": "", **panel, "shapeType": "ROUNDED_RECTANGLE",
+        "fillColor": t["identity_panel"]["color"], "cornerRadius": 0,
+    })
+
+    name_spec = t["name"]
+    shapes.append({
+        # Confirmed live: figjam_create_shape_with_text clips overflowing
+        # text at the shape's width rather than wrapping it, so the char
+        # limit must be conservative enough to actually fit one line at
+        # this font size within this width, not just "reasonably short".
+        "text": _truncate(persona.get("name", "Unnamed persona"), 17),
+        "x": x + name_spec["x"], "y": y + name_spec["y"], "width": name_spec["width"], "height": name_spec["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": t["identity_panel"]["color"],
+        "textColor": _WHITE, "fontSize": name_spec["font_size"], "cornerRadius": 0,
+    })
+
+    role_spec = t["role"]
+    role_text = persona.get("archetype") or persona.get("short_description", "")
+    shapes.append({
+        "text": _truncate(role_text, 26),
+        "x": x + role_spec["x"], "y": y + role_spec["y"], "width": role_spec["width"], "height": role_spec["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": t["identity_panel"]["color"],
+        "textColor": _WHITE, "fontSize": role_spec["font_size"], "cornerRadius": 0,
+    })
+
+    quote_spec = t["quote"]
     shapes.append({
         "text": _quote_text(persona.get("representative_quote") or {}),
-        "x": right_x, "y": cursor_y, "width": MAIN_AREA_WIDTH, "height": _QUOTE_HEIGHT,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _QUOTE_FONT_SIZE,
+        "x": x + quote_spec["x"], "y": y + quote_spec["y"], "width": quote_spec["width"], "height": quote_spec["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE, "fontSize": quote_spec["font_size"], "cornerRadius": 0,
     })
-    cursor_y += _QUOTE_HEIGHT + ROW_GAP
 
+    divider = rect("divider")
     shapes.append({
-        "text": _zone_text("Goals", goals), "x": right_x, "y": cursor_y,
-        "width": COLUMN_WIDTH, "height": row1_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
+        "text": "", **divider, "shapeType": "ROUNDED_RECTANGLE",
+        "fillColor": t["divider"]["color"], "cornerRadius": 0,
     })
-    shapes.append({
-        "text": _zone_text("Pain points", pain_points), "x": right_col_x, "y": cursor_y,
-        "width": COLUMN_WIDTH, "height": row1_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
-    })
-    cursor_y += row1_height + ROW_GAP
 
+    bg_heading = t["background_heading"]
     shapes.append({
-        "text": _zone_text("Behaviours", behaviours), "x": right_x, "y": cursor_y,
-        "width": COLUMN_WIDTH, "height": row2_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
+        "text": "BACKGROUND",
+        "x": x + bg_heading["x"], "y": y + bg_heading["y"], "width": bg_heading["width"], "height": bg_heading["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
+        "textColor": _HEADING_COLOR, "fontSize": bg_heading["font_size"], "cornerRadius": 0,
     })
-    shapes.append({
-        "text": _zone_text("Needs", needs), "x": right_col_x, "y": cursor_y,
-        "width": COLUMN_WIDTH, "height": row2_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
-    })
-    cursor_y += row2_height + ROW_GAP
 
+    bg_body = t["background_body"]
     shapes.append({
-        "text": _zone_text("Motivations", motivations), "x": right_x, "y": cursor_y,
-        "width": MAIN_AREA_WIDTH, "height": motivations_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
+        "text": _truncate(persona.get("short_description", ""), 75),
+        "x": x + bg_body["x"], "y": y + bg_body["y"], "width": bg_body["width"], "height": bg_body["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
+        "textColor": _BODY_COLOR, "fontSize": bg_body["font_size"], "cornerRadius": 0,
     })
-    cursor_y += motivations_height + ROW_GAP
 
+    grid = t["grid"]
+    needs_and_behaviours = (persona.get("needs") or []) + (persona.get("behaviours") or [])
+    columns = [
+        ("GOALS", persona.get("goals") or []),
+        ("FRUSTRATIONS", persona.get("pain_points") or []),
+        ("NEEDS", needs_and_behaviours),
+    ]
+    for i, (label, items) in enumerate(columns):
+        col_x = x + bg_body["x"] + i * (grid["column_width"] + grid["gap"])
+        heading_y = y + grid["y"]
+        body_y = heading_y + grid["heading_height"] + t["gaps"]["bullet"]
+        shapes.append({
+            "text": label,
+            "x": col_x, "y": heading_y, "width": grid["column_width"], "height": grid["heading_height"],
+            "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
+            "textColor": _HEADING_COLOR, "fontSize": grid["font_size_heading"], "cornerRadius": 0,
+        })
+        shapes.append({
+            "text": _bulleted(items, max_items=3, max_chars_each=32),
+            "x": col_x, "y": body_y, "width": grid["column_width"], "height": grid["body_height"],
+            "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
+            "textColor": _BODY_COLOR, "fontSize": grid["font_size_body"], "cornerRadius": 0,
+        })
+
+    evidence_spec = t["evidence"]
     evidence = persona.get("evidence") or []
     shapes.append({
-        "text": "RESEARCH EVIDENCE\n" + (", ".join(evidence) if evidence else "none"),
-        "x": right_x, "y": cursor_y, "width": MAIN_AREA_WIDTH, "height": _EVIDENCE_HEIGHT,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _EVIDENCE_COLOR, "fontSize": _ZONE_FONT_SIZE,
+        "text": "RESEARCH EVIDENCE: " + (", ".join(evidence) if evidence else "none"),
+        "x": x + evidence_spec["x"], "y": y + evidence_spec["y"],
+        "width": evidence_spec["width"], "height": evidence_spec["height"],
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
+        "textColor": _MUTED_COLOR, "fontSize": evidence_spec["font_size"], "cornerRadius": 0,
     })
 
-    return {"x": x, "y": y, "width": CARD_WIDTH, "height": card_height, "shapes": shapes}
+    return {"x": x, "y": y, "width": CARD_WIDTH, "height": CARD_HEIGHT, "shapes": shapes}
 
 
 def build_persona_layout_plan(personas: list[dict[str, Any]], start_x: float = 0, start_y: float = 0) -> dict[str, Any]:
     """Returns {"section": {title, x, y, width, height}, "cards": [...]}.
-    Cards are arranged in a fixed 2-column grid (row-major), each row's
-    height set by its tallest card so both cards in a row still line up,
-    even though card height varies with how much content each persona has."""
+    Every card is exactly CARD_WIDTH x CARD_HEIGHT (the fixed template) -
+    row height is simply CARD_HEIGHT, never computed from content, since
+    content no longer affects card size at all."""
     if not personas:
         return {"section": None, "cards": []}
 
@@ -224,15 +228,12 @@ def build_persona_layout_plan(personas: list[dict[str, Any]], start_x: float = 0
     max_row_width = 0.0
 
     for row in rows:
-        row_cards = []
         cursor_x = start_x + SECTION_PADDING
         for persona in row:
-            row_cards.append(_build_card(persona, cursor_x, cursor_y))
+            cards.append(_build_card(persona, cursor_x, cursor_y))
             cursor_x += CARD_WIDTH + CARD_GAP_X
-        row_height = max(c["height"] for c in row_cards)
         max_row_width = max(max_row_width, cursor_x - CARD_GAP_X - start_x)
-        cards.extend(row_cards)
-        cursor_y += row_height + CARD_GAP_Y
+        cursor_y += CARD_HEIGHT + CARD_GAP_Y
 
     section = {
         "title": _PERSONAS_SECTION_TITLE,
@@ -271,10 +272,15 @@ def _validate_layout(plan: dict[str, Any]) -> None:
     assert_no_overlaps(card_rects, margin=CARD_GAP_X / 2, label="persona cards")
 
     for card in plan["cards"]:
-        # The first shape is the card's own background - every other zone is
-        # deliberately layered on top of it, so it's excluded from this
-        # check; only the foreground zones must not overlap EACH OTHER.
-        zone_rects = [Rect(s["x"], s["y"], s["width"], s["height"]) for s in card["shapes"][1:]]
+        assert card["width"] == CARD_WIDTH and card["height"] == CARD_HEIGHT, \
+            "every persona card must use the exact same fixed template dimensions"
+        # The first shape (right-content background) and the photo/identity
+        # panel are deliberately layered under other shapes on purpose -
+        # only shapes sharing the SAME background color are exempt from the
+        # "must not overlap" check, since those are intentional backgrounds
+        # with foreground text/dividers placed on top of them by design.
+        foreground = [s for s in card["shapes"] if s["text"]]
+        zone_rects = [Rect(s["x"], s["y"], s["width"], s["height"]) for s in foreground]
         collision = find_overlap(zone_rects)
         if collision is not None:
             raise ValueError(f"persona card layout bug: zones {collision} overlap within a card")
@@ -291,9 +297,10 @@ def _validate_layout(plan: dict[str, Any]) -> None:
 
 async def push_personas_to_figjam(personas: list[dict[str, Any]]) -> dict[str, Any]:
     """Creates one real FigJam section containing every persona card, placed
-    clear of whatever synthesis sections already exist on the connected
-    board. Cards are built from figjam_create_shape_with_text (real,
-    editable shapes), never figjam_create_stickies."""
+    clear of whatever content already exists on the connected board. Cards
+    are built from figjam_create_shape_with_text (real, editable shapes),
+    never figjam_create_stickies, using the fixed PERSONA_TEMPLATE geometry
+    for every persona regardless of content amount."""
     if not personas:
         raise ValueError("Nothing to push: generate personas first, there are none yet.")
 
@@ -309,7 +316,7 @@ async def push_personas_to_figjam(personas: list[dict[str, Any]]) -> dict[str, A
         start_x = existing_right_edge + SECTION_GAP if existing_right_edge > 0 else 0
         activity.append(
             f"Reserved space for the Personas section clear of existing content (x >= {start_x:.0f}px)"
-            if existing_right_edge > 0 else "No existing synthesis content found; starting a fresh layout"
+            if existing_right_edge > 0 else "No existing content found; starting a fresh layout"
         )
 
         plan = build_persona_layout_plan(personas, start_x=start_x)
@@ -322,12 +329,23 @@ async def push_personas_to_figjam(personas: list[dict[str, Any]]) -> dict[str, A
         )
         activity.append(f"Created section '{section['title']}'")
 
+        created_node_ids: list[str] = []
         for i, card in enumerate(plan["cards"]):
             persona_name = personas[i].get("name", "Unnamed persona")
             for shape in card["shapes"]:
-                await mcp_client.create_shape_with_text(sess, **shape)
+                result = await mcp_client.create_shape_with_text(sess, **shape)
+                if result.get("node_id"):
+                    created_node_ids.append(result["node_id"])
                 created_shapes += 1
             activity.append(f"Created persona card '{persona_name}' ({len(card['shapes'])} elements)")
+
+        # figjam_create_shape_with_text's cornerRadius param is silently
+        # ignored, and every shape carries a visible default stroke
+        # (confirmed live); fix both on every shape just created via the
+        # real plugin API instead, one batched call.
+        if created_node_ids:
+            await mcp_client.apply_card_finish(sess, created_node_ids)
+            activity.append(f"Applied sharp corners and removed default strokes on {len(created_node_ids)} element(s)")
 
     return {
         "personas": [p.get("name", "Unnamed persona") for p in personas],
