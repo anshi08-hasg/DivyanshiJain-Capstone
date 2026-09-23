@@ -457,48 +457,44 @@ def test_persona_layout_plan_empty_list_produces_no_cards():
     assert plan["section"] is None
 
 
-def test_persona_card_locks_top_section_but_grows_grid_for_content():
-    # The header/quote/background section stays pixel-locked regardless of
-    # content. The Goals/Frustrations/Needs grid is the one deliberate
-    # exception (explicit later ask: "write full things, don't cut them
-    # off") - its height, and therefore the card's overall height, grows to
-    # fit real content instead of truncating it.
+def test_persona_card_grows_height_without_truncating_quote_or_background():
+    # Nothing is ever hidden behind an ellipsis: width, columns, and font
+    # sizes stay exactly fixed regardless of content, but the card grows
+    # TALLER instead of cutting anything short - the explicit "card width
+    # stays fixed, card height may grow, never shrink font to fit" rule.
     from figjam.persona_layout import PERSONA_TEMPLATE
 
-    tiny = {
-        "id": "P1", "name": "A", "archetype": "", "short_description": "",
-        "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
-        "representative_quote": {"text": "", "is_verbatim": False, "source_id": None}, "evidence": [],
-    }
+    tiny = _make_test_personas(1, content_size=1)[0]
+    tiny["short_description"] = "x"
+    tiny["representative_quote"] = {"text": "y", "is_verbatim": False, "source_id": None}
+
     maxed = _make_test_personas(1, content_size=10)[0]
-    maxed["short_description"] = "x" * 500
-    maxed["representative_quote"] = {"text": "y" * 400, "is_verbatim": False, "source_id": None}
-    maxed["goals"] = ["A realistic-length research finding about what this persona actually wants to accomplish"]
+    maxed["short_description"] = "A genuinely long research background paragraph. " * 12
+    long_quote = "A full, complete representative quote that must never be cut short. " * 6
+    maxed["representative_quote"] = {"text": long_quote, "is_verbatim": False, "source_id": None}
+    long_goal = "A realistic-length research finding about what this persona actually wants to accomplish"
+    maxed["goals"] = [long_goal]
 
     card_tiny = _build_card_for_test(tiny, 0, 0)
     card_maxed = _build_card_for_test(maxed, 0, 0)
 
     assert card_tiny["width"] == card_maxed["width"] == PERSONA_TEMPLATE["width"] == 1200
-    assert card_maxed["height"] >= card_tiny["height"], "more content must never produce a shorter card"
+    assert card_maxed["height"] > card_tiny["height"], "more content must grow the card, never get truncated to fit"
 
-    # Photo, name, role, quote, divider, and background stay at the exact
-    # same position/size regardless of content - only their text may differ.
-    locked_indices = (1, 3, 4, 5, 6, 7, 8, 9)  # photo, name, role, profile, quote, divider, bg_heading, bg_body
-    for i in locked_indices:
-        s1, s2 = card_tiny["shapes"][i], card_maxed["shapes"][i]
-        assert s1["x"] == s2["x"] and s1["y"] == s2["y"]
-        assert s1["width"] == s2["width"] and s1["height"] == s2["height"]
+    # The photo stays at the exact same fixed position/size regardless of
+    # content - only the right column and the identity panel's height flex.
+    photo_tiny = card_tiny["shapes"][card_tiny["photo_shape_index"]]
+    photo_maxed = card_maxed["shapes"][card_maxed["photo_shape_index"]]
+    assert photo_tiny["x"] == photo_maxed["x"] and photo_tiny["y"] == photo_maxed["y"]
+    assert photo_tiny["width"] == photo_maxed["width"]
+    assert photo_tiny["height"] == photo_maxed["height"]
 
-    # The header/quote/background zone's own text must still be truncated,
-    # never left to overflow.
-    for i in locked_indices:
-        assert len(card_maxed["shapes"][i]["text"]) < 400
-
-    # The grid's bullet text, by contrast, must NOT be aggressively cut -
-    # "write full things" means the actual finding survives close to intact.
-    long_goal = maxed["goals"][0]
-    grid_body_text = card_maxed["shapes"][11]["text"]  # goals: [10]=heading "GOALS", [11]=body
-    assert long_goal[:40] in grid_body_text, "grid content must not be truncated away, only the header section is"
+    # The full quote and the full goal text must survive verbatim, never
+    # truncated with "..." even though they're deliberately very long.
+    quote_shape = next(s for s in card_maxed["shapes"] if long_quote[:30] in s["text"])
+    assert not quote_shape["text"].rstrip().endswith("..."), "quote must never be truncated"
+    goal_shape = next(s for s in card_maxed["shapes"] if long_goal[:30] in s["text"])
+    assert long_goal in goal_shape["text"], "grid content must not be truncated away"
 
 
 def test_persona_card_photo_and_identity_panel_use_sharp_corners():
@@ -515,7 +511,7 @@ def test_persona_card_name_is_not_a_participant_id():
     persona = _make_test_personas(1)[0]
     persona["name"] = "The Host"
     card = _build_card_for_test(persona, 0, 0)
-    name_shape = card["shapes"][3]  # right_bg, photo, panel, name
+    name_shape = card["shapes"][card["name_shape_index"]]
     assert name_shape["text"] == "The Host"
 
 
@@ -524,39 +520,51 @@ def test_persona_card_name_and_role_are_white_label_boxes():
     # with dark text sitting on the dark panel, not white text directly on
     # the panel's own background.
     card = _build_card_for_test(_make_test_personas(1)[0], 0, 0)
-    name_shape, role_shape = card["shapes"][3], card["shapes"][4]
+    name_shape = card["shapes"][card["name_shape_index"]]
+    role_shape = card["shapes"][card["role_shape_index"]]
     assert name_shape["fillColor"] == "#FFFFFF"
     assert role_shape["fillColor"] == "#FFFFFF"
     assert name_shape["textColor"] != "#FFFFFF", "text on a white box must be dark, not white-on-white"
     assert role_shape["textColor"] != "#FFFFFF"
 
 
-def test_persona_card_includes_profile_fields_shown_in_webapp_preview():
+def test_persona_card_includes_only_research_supported_profile_fields():
     # The webapp preview already shows Role/Age/Location/Digital behaviour
     # (figjam.js's confidenceBadge/profile rendering) - the FigJam card had
-    # dropped this zone entirely during the pixel-template rebuild; this
-    # locks in that it's back and shows unsupported fields honestly rather
-    # than inventing them.
+    # dropped this zone entirely during the pixel-template rebuild. It's
+    # back, but per the explicit "remove useless placeholder information"
+    # reversal, a field the research does NOT support must be OMITTED
+    # entirely - never shown as an invented "Not identified in research" line.
     persona = _make_test_personas(1)[0]
     persona["profile"] = {"role": "Host", "age": "21", "location": None, "digital_behaviour": None}
     card = _build_card_for_test(persona, 0, 0)
-    profile_shape = card["shapes"][5]  # right_bg, photo, panel, name, role, profile
+    assert card["profile_shape_index"] is not None
+    profile_shape = card["shapes"][card["profile_shape_index"]]
     assert "Role: Host" in profile_shape["text"]
     assert "Age: 21" in profile_shape["text"]
-    assert "Location: Not identified in research" in profile_shape["text"]
-    assert "Digital behaviour: Not identified in research" in profile_shape["text"]
+    assert "Location" not in profile_shape["text"], "unsupported fields must be omitted, not shown as a placeholder"
+    assert "Digital behaviour" not in profile_shape["text"]
+    assert "Not identified in research" not in profile_shape["text"]
+
+
+def test_persona_card_omits_profile_zone_entirely_when_nothing_is_supported():
+    persona = _make_test_personas(1)[0]
+    persona["profile"] = {"role": None, "age": None, "location": None, "digital_behaviour": None}
+    card = _build_card_for_test(persona, 0, 0)
+    assert card["profile_shape_index"] is None, "an entirely-unsupported profile must skip the zone, not fake it"
 
 
 def test_persona_grid_body_grows_with_more_and_longer_content():
-    from figjam.persona_layout import _column_body_height
+    from figjam.persona_layout import PERSONA_TEMPLATE, _bullets_block_height
 
-    short = _column_body_height(["a", "b"])
-    long_items = _column_body_height([
+    grid = PERSONA_TEMPLATE["grid"]
+    short = _bullets_block_height(["a", "b"], grid["column_width"], grid["font_size_body"], grid["min_body_height"])
+    long_items = _bullets_block_height([
         "A much longer research finding that will need to wrap across multiple lines within the column",
         "Another substantial finding that also needs real space to display without being cut short",
         "A third distinct point raised independently by more than one participant in the research",
         "A fourth finding, since real personas can have up to four bullets per section here",
-    ])
+    ], grid["column_width"], grid["font_size_body"], grid["min_body_height"])
     assert long_items > short, "more/longer content must grow the body height, not get truncated to fit a fixed box"
 
 
@@ -599,9 +607,47 @@ def test_persona_layout_starts_clear_of_existing_content():
 
 def test_persona_cards_carry_evidence_ids_in_their_footer_shape():
     plan = build_persona_layout_plan(_make_test_personas(1))
-    evidence_shape = plan["cards"][0]["shapes"][-1]
-    assert "RESEARCH EVIDENCE" in evidence_shape["text"]
+    evidence_shape = next(s for s in plan["cards"][0]["shapes"] if s["text"].startswith("RESEARCH EVIDENCE"))
     assert "R000" in evidence_shape["text"]
+
+
+def test_persona_card_evidence_ids_are_never_truncated():
+    persona = _make_test_personas(1)[0]
+    persona["evidence"] = [f"R{i:03d}" for i in range(12)]
+    card = _build_card_for_test(persona, 0, 0)
+    evidence_shape = next(s for s in card["shapes"] if s["text"].startswith("RESEARCH EVIDENCE"))
+    for source_id in persona["evidence"]:
+        assert source_id in evidence_shape["text"], "every evidence id must survive, none dropped for space"
+
+
+def test_persona_card_shows_confidence_and_participants_only_when_present():
+    with_extras = _make_test_personas(1)[0]
+    with_extras["confidence"] = "strong"
+    with_extras["evidence_count"] = 4
+    with_extras["participant_coverage"] = ["P2", "P4"]
+    card = _build_card_for_test(with_extras, 0, 0)
+    confidence_shape = next(s for s in card["shapes"] if s["text"].startswith("CONFIDENCE"))
+    assert "STRONG" in confidence_shape["text"] and "4" in confidence_shape["text"]
+    participants_shape = next(s for s in card["shapes"] if s["text"].startswith("PARTICIPANTS"))
+    assert "P2" in participants_shape["text"] and "P4" in participants_shape["text"]
+
+    without_extras = _make_test_personas(1)[0]
+    card_without = _build_card_for_test(without_extras, 0, 0)
+    assert not any(s["text"].startswith("CONFIDENCE") for s in card_without["shapes"])
+    assert not any(s["text"].startswith("PARTICIPANTS") for s in card_without["shapes"])
+
+
+def test_persona_card_includes_motivations_when_present():
+    persona = _make_test_personas(1)[0]
+    persona["motivations"] = ["Focus on hosting guests", "Avoid juggling songs manually"]
+    card = _build_card_for_test(persona, 0, 0)
+    motivations_shape = next(s for s in card["shapes"] if s["text"].startswith("MOTIVATIONS"))
+    assert motivations_shape is not None
+
+    no_motivations = _make_test_personas(1)[0]
+    no_motivations["motivations"] = []
+    card_without = _build_card_for_test(no_motivations, 0, 0)
+    assert not any(s["text"].startswith("MOTIVATIONS") for s in card_without["shapes"])
 
 
 def test_find_existing_content_right_edge_covers_every_node_not_just_sections():
