@@ -5,13 +5,15 @@ uses for Themes/Insights/etc, extended with figjam_create_shape_with_text
 list_tools()). Personas are built from this, NEVER figjam_create_stickies
 (a fixed 240x240 sticky note, confirmed live - width/height are ignored).
 
-LOCKED TEMPLATE: every persona card uses the exact same 1200x660 canvas,
-the same column widths, the same element positions, and the same
-typography, regardless of how much content a given persona has. Only the
-CONTENT varies (per explicit instruction: "the layout does NOT adapt to
-the content" - content is summarized/truncated to fit the fixed template
-instead of the template growing to fit the content). See PERSONA_TEMPLATE
-below for the single source of truth for every measurement.
+LOCKED TEMPLATE: every persona card uses the same 1200px-wide canvas, the
+same column widths, the same element positions, and the same typography
+for the photo/quote/background section - that part never adapts to
+content. The Goals/Frustrations/Needs grid is the one exception (per an
+explicit later instruction to show full findings rather than truncate
+them): its row height, and therefore the card's overall height, grows to
+fit that grid's real content, with the identity panel stretching to match.
+See PERSONA_TEMPLATE below for the single source of truth for every fixed
+measurement.
 
 All cards live inside one real FigJam section titled "User personas",
 positioned dynamically clear of EVERY node already on the connected board
@@ -23,8 +25,40 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
 from . import figma_mcp_client as mcp_client
 from .layout_geometry import Rect, assert_no_overlaps, bounding_box, find_overlap
+
+_AVATAR_SERVICE_URL = "https://ui-avatars.com/api/"
+
+
+def _fetch_avatar_image(persona_name: str) -> bytes | None:
+    """A generic, abstract initials-on-a-tint avatar - deliberately not a
+    realistic photo of a specific person, per the explicit "do not invent a
+    realistic depiction of a non-existent participant" instruction, while
+    still visually filling the photo placeholder instead of leaving it a
+    flat empty box. Returns None (skip the fill, keep the plain placeholder
+    color) if the avatar service is unreachable, rather than failing the
+    whole push over a decorative element."""
+    try:
+        response = httpx.get(
+            _AVATAR_SERVICE_URL,
+            params={
+                "name": persona_name,
+                "size": 400,
+                "background": "E8E8E8",
+                "color": "5A5A5A",
+                "bold": "true",
+                "length": 2,
+                "format": "png",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.content
+    except httpx.HTTPError:
+        return None
 
 _NOT_IDENTIFIED = "Not identified in research"
 
@@ -78,9 +112,45 @@ def _truncate(text: str, max_chars: int) -> str:
     return (cut or text[:max_chars]).rstrip(",.;:") + "…"
 
 
-def _bulleted(items: list[str], max_items: int, max_chars_each: int) -> str:
-    items = [i for i in (items or []) if i and i.strip()][:max_items] or [_NOT_IDENTIFIED]
-    return "\n".join(f"• {_truncate(i, max_chars_each)}" for i in items)
+_GRID_CHARS_PER_LINE = 24  # empirically measured against real rendered screenshots at this column's width/font
+_GRID_LINE_HEIGHT = 18
+_GRID_ITEM_GAP = 8
+_GRID_BODY_PADDING = 16
+_GRID_MIN_BODY_HEIGHT = 120
+_GRID_MAX_CHARS_EACH = 220  # a safety ceiling only, not meant to actually trigger - items are already short phrases
+
+# The smallest a card's grid can be (all three columns at their minimum
+# body height), derived from the template rather than hardcoded, so this
+# stays correct if PERSONA_TEMPLATE's numbers ever change.
+_MIN_CARD_HEIGHT = (
+    PERSONA_TEMPLATE["grid"]["y"] + PERSONA_TEMPLATE["grid"]["heading_height"] + PERSONA_TEMPLATE["gaps"]["bullet"]
+    + _GRID_MIN_BODY_HEIGHT + PERSONA_TEMPLATE["gaps"]["section"]
+    + PERSONA_TEMPLATE["evidence"]["height"] + PERSONA_TEMPLATE["right_content"]["padding"]
+)
+
+
+def _wrapped_lines(text: str, chars_per_line: int) -> int:
+    return max(1, -(-len(text) // chars_per_line))
+
+
+def _clean_items(items: list[str], max_items: int) -> list[str]:
+    cleaned = [_truncate(i, _GRID_MAX_CHARS_EACH) for i in (items or []) if i and i.strip()][:max_items]
+    return cleaned or [_NOT_IDENTIFIED]
+
+
+def _bulleted_full(items: list[str]) -> str:
+    return "\n".join(f"• {i}" for i in items)
+
+
+def _column_body_height(items: list[str]) -> float:
+    """Grows to fit the actual (untruncated) content, per the explicit
+    "write full things" ask - unlike the header/quote/background zones
+    above it, which stay at their locked template size."""
+    lines = sum(_wrapped_lines(f"• {i}", _GRID_CHARS_PER_LINE) for i in items)
+    return max(
+        _GRID_MIN_BODY_HEIGHT,
+        _GRID_BODY_PADDING * 2 + lines * _GRID_LINE_HEIGHT + max(0, len(items) - 1) * _GRID_ITEM_GAP,
+    )
 
 
 def _quote_text(quote: dict[str, Any]) -> str:
@@ -95,11 +165,25 @@ def _quote_text(quote: dict[str, Any]) -> str:
 
 def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     """Returns {"x", "y", "width", "height", "shapes": [...]} using the fixed
-    PERSONA_TEMPLATE geometry - x, y is the card's own origin; every element
-    below is that origin plus a fixed template offset, never a value derived
-    from this persona's own content length."""
+    PERSONA_TEMPLATE geometry for the header/quote/background section, and a
+    content-sized Goals/Frustrations/Needs grid per the explicit "write full
+    things, don't cut them off" ask - the identity panel and overall card
+    height grow to match however tall that grid ends up being, so the two
+    columns still end at the same point; only the top (photo/quote/
+    background) stays pixel-locked."""
     t = PERSONA_TEMPLATE
     shapes: list[dict[str, Any]] = []
+
+    goals = _clean_items(persona.get("goals"), max_items=4)
+    pain_points = _clean_items(persona.get("pain_points"), max_items=4)
+    needs_and_behaviours = _clean_items((persona.get("needs") or []) + (persona.get("behaviours") or []), max_items=4)
+    grid = t["grid"]
+    row_height = max(_column_body_height(c) for c in (goals, pain_points, needs_and_behaviours))
+
+    grid_heading_y = grid["y"]
+    grid_body_y = grid_heading_y + grid["heading_height"] + t["gaps"]["bullet"]
+    evidence_y = grid_body_y + row_height + t["gaps"]["section"]
+    total_height = evidence_y + t["evidence"]["height"] + t["right_content"]["padding"]
 
     def rect(key: str) -> dict[str, float]:
         spec = t[key]
@@ -108,7 +192,7 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     # z-order: backgrounds first, then everything layered on top of them.
     right = t["right_content"]
     shapes.append({
-        "text": "", "x": x + right["x"], "y": y + right["y"], "width": right["width"], "height": right["height"],
+        "text": "", "x": x + right["x"], "y": y + right["y"], "width": right["width"], "height": total_height,
         "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE, "cornerRadius": 0,
     })
 
@@ -119,6 +203,7 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     })
 
     panel = rect("identity_panel")
+    panel["height"] = total_height - t["photo"]["height"]
     shapes.append({
         "text": "", **panel, "shapeType": "ROUNDED_RECTANGLE",
         "fillColor": t["identity_panel"]["color"], "cornerRadius": 0,
@@ -126,14 +211,15 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
 
     name_spec = t["name"]
     shapes.append({
-        # Confirmed live: figjam_create_shape_with_text clips overflowing
-        # text at the shape's width rather than wrapping it, so the char
-        # limit must be conservative enough to actually fit one line at
-        # this font size within this width, not just "reasonably short".
+        # White label box with dark text (not white text on the dark panel),
+        # per the reference the user provided. Confirmed live that
+        # figjam_create_shape_with_text clips overflowing text at the
+        # shape's width rather than wrapping it, so the char limit stays
+        # conservative enough to fit one line at this font size/width.
         "text": _truncate(persona.get("name", "Unnamed persona"), 17),
         "x": x + name_spec["x"], "y": y + name_spec["y"], "width": name_spec["width"], "height": name_spec["height"],
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": t["identity_panel"]["color"],
-        "textColor": _WHITE, "fontSize": name_spec["font_size"], "cornerRadius": 0,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
+        "textColor": _HEADING_COLOR, "fontSize": name_spec["font_size"], "cornerRadius": 0,
     })
 
     role_spec = t["role"]
@@ -141,8 +227,8 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     shapes.append({
         "text": _truncate(role_text, 26),
         "x": x + role_spec["x"], "y": y + role_spec["y"], "width": role_spec["width"], "height": role_spec["height"],
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": t["identity_panel"]["color"],
-        "textColor": _WHITE, "fontSize": role_spec["font_size"], "cornerRadius": 0,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
+        "textColor": _BODY_COLOR, "fontSize": role_spec["font_size"], "cornerRadius": 0,
     })
 
     quote_spec = t["quote"]
@@ -174,17 +260,15 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
         "textColor": _BODY_COLOR, "fontSize": bg_body["font_size"], "cornerRadius": 0,
     })
 
-    grid = t["grid"]
-    needs_and_behaviours = (persona.get("needs") or []) + (persona.get("behaviours") or [])
     columns = [
-        ("GOALS", persona.get("goals") or []),
-        ("FRUSTRATIONS", persona.get("pain_points") or []),
+        ("GOALS", goals),
+        ("FRUSTRATIONS", pain_points),
         ("NEEDS", needs_and_behaviours),
     ]
     for i, (label, items) in enumerate(columns):
         col_x = x + bg_body["x"] + i * (grid["column_width"] + grid["gap"])
-        heading_y = y + grid["y"]
-        body_y = heading_y + grid["heading_height"] + t["gaps"]["bullet"]
+        heading_y = y + grid_heading_y
+        body_y = y + grid_body_y
         shapes.append({
             "text": label,
             "x": col_x, "y": heading_y, "width": grid["column_width"], "height": grid["heading_height"],
@@ -192,8 +276,8 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
             "textColor": _HEADING_COLOR, "fontSize": grid["font_size_heading"], "cornerRadius": 0,
         })
         shapes.append({
-            "text": _bulleted(items, max_items=3, max_chars_each=32),
-            "x": col_x, "y": body_y, "width": grid["column_width"], "height": grid["body_height"],
+            "text": _bulleted_full(items),
+            "x": col_x, "y": body_y, "width": grid["column_width"], "height": row_height,
             "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
             "textColor": _BODY_COLOR, "fontSize": grid["font_size_body"], "cornerRadius": 0,
         })
@@ -202,20 +286,32 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     evidence = persona.get("evidence") or []
     shapes.append({
         "text": "RESEARCH EVIDENCE: " + (", ".join(evidence) if evidence else "none"),
-        "x": x + evidence_spec["x"], "y": y + evidence_spec["y"],
+        "x": x + evidence_spec["x"], "y": y + evidence_y,
         "width": evidence_spec["width"], "height": evidence_spec["height"],
         "shapeType": "ROUNDED_RECTANGLE", "fillColor": _WHITE,
         "textColor": _MUTED_COLOR, "fontSize": evidence_spec["font_size"], "cornerRadius": 0,
     })
 
-    return {"x": x, "y": y, "width": CARD_WIDTH, "height": CARD_HEIGHT, "shapes": shapes}
+    # A generic abstract avatar (persona's initials on a neutral tint) fills
+    # the photo placeholder - not a fabricated realistic photo of a specific
+    # non-existent person, per the earlier explicit "do not invent a
+    # realistic person" instruction, while still visually filling the box
+    # rather than leaving it empty.
+    photo_shape_index = 1
+    return {
+        "x": x, "y": y, "width": CARD_WIDTH, "height": total_height, "shapes": shapes,
+        "photo_shape_index": photo_shape_index, "persona_name": persona.get("name", "Unnamed persona"),
+    }
 
 
 def build_persona_layout_plan(personas: list[dict[str, Any]], start_x: float = 0, start_y: float = 0) -> dict[str, Any]:
     """Returns {"section": {title, x, y, width, height}, "cards": [...]}.
-    Every card is exactly CARD_WIDTH x CARD_HEIGHT (the fixed template) -
-    row height is simply CARD_HEIGHT, never computed from content, since
-    content no longer affects card size at all."""
+    Every card is exactly CARD_WIDTH wide, and the top (photo/quote/
+    background) section is pixel-locked to PERSONA_TEMPLATE - but overall
+    card HEIGHT now grows to fit the Goals/Frustrations/Needs grid's real
+    content, per the explicit "write full things, don't cut them off" ask.
+    Row height is the tallest card in that row, so both cards in a row
+    still start at the same y even when their heights differ."""
     if not personas:
         return {"section": None, "cards": []}
 
@@ -229,11 +325,15 @@ def build_persona_layout_plan(personas: list[dict[str, Any]], start_x: float = 0
 
     for row in rows:
         cursor_x = start_x + SECTION_PADDING
+        row_cards = []
         for persona in row:
-            cards.append(_build_card(persona, cursor_x, cursor_y))
+            card = _build_card(persona, cursor_x, cursor_y)
+            row_cards.append(card)
             cursor_x += CARD_WIDTH + CARD_GAP_X
+        cards.extend(row_cards)
         max_row_width = max(max_row_width, cursor_x - CARD_GAP_X - start_x)
-        cursor_y += CARD_HEIGHT + CARD_GAP_Y
+        row_height = max(c["height"] for c in row_cards)
+        cursor_y += row_height + CARD_GAP_Y
 
     section = {
         "title": _PERSONAS_SECTION_TITLE,
@@ -272,8 +372,11 @@ def _validate_layout(plan: dict[str, Any]) -> None:
     assert_no_overlaps(card_rects, margin=CARD_GAP_X / 2, label="persona cards")
 
     for card in plan["cards"]:
-        assert card["width"] == CARD_WIDTH and card["height"] == CARD_HEIGHT, \
-            "every persona card must use the exact same fixed template dimensions"
+        # Width and the top (photo/quote/background) section stay locked to
+        # the template; only overall height varies, since the
+        # Goals/Frustrations/Needs grid now grows to fit real content.
+        assert card["width"] == CARD_WIDTH, "every persona card must use the same fixed width"
+        assert card["height"] >= _MIN_CARD_HEIGHT, "a card must never be shorter than the locked top section + minimum grid"
         # The first shape (right-content background) and the photo/identity
         # panel are deliberately layered under other shapes on purpose -
         # only shapes sharing the SAME background color are exempt from the
@@ -332,12 +435,21 @@ async def push_personas_to_figjam(personas: list[dict[str, Any]]) -> dict[str, A
         created_node_ids: list[str] = []
         for i, card in enumerate(plan["cards"]):
             persona_name = personas[i].get("name", "Unnamed persona")
-            for shape in card["shapes"]:
+            photo_node_id = None
+            for shape_index, shape in enumerate(card["shapes"]):
                 result = await mcp_client.create_shape_with_text(sess, **shape)
                 if result.get("node_id"):
                     created_node_ids.append(result["node_id"])
+                    if shape_index == card["photo_shape_index"]:
+                        photo_node_id = result["node_id"]
                 created_shapes += 1
             activity.append(f"Created persona card '{persona_name}' ({len(card['shapes'])} elements)")
+
+            if photo_node_id:
+                avatar_bytes = _fetch_avatar_image(persona_name)
+                if avatar_bytes:
+                    await mcp_client.set_image_fill(sess, photo_node_id, avatar_bytes)
+                    activity.append(f"Filled photo placeholder for '{persona_name}' with a generic avatar")
 
         # figjam_create_shape_with_text's cornerRadius param is silently
         # ignored, and every shape carries a visible default stroke

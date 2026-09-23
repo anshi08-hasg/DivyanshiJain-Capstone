@@ -457,10 +457,12 @@ def test_persona_layout_plan_empty_list_produces_no_cards():
     assert plan["section"] is None
 
 
-def test_persona_card_uses_locked_fixed_template_regardless_of_content():
-    # The core new requirement: card size and every element's position must
-    # be IDENTICAL across personas, whether one has almost no content and
-    # another has the maximum. Only the text inside changes.
+def test_persona_card_locks_top_section_but_grows_grid_for_content():
+    # The header/quote/background section stays pixel-locked regardless of
+    # content. The Goals/Frustrations/Needs grid is the one deliberate
+    # exception (explicit later ask: "write full things, don't cut them
+    # off") - its height, and therefore the card's overall height, grows to
+    # fit real content instead of truncating it.
     from figjam.persona_layout import PERSONA_TEMPLATE
 
     tiny = {
@@ -471,26 +473,32 @@ def test_persona_card_uses_locked_fixed_template_regardless_of_content():
     maxed = _make_test_personas(1, content_size=10)[0]
     maxed["short_description"] = "x" * 500
     maxed["representative_quote"] = {"text": "y" * 400, "is_verbatim": False, "source_id": None}
+    maxed["goals"] = ["A realistic-length research finding about what this persona actually wants to accomplish"]
 
     card_tiny = _build_card_for_test(tiny, 0, 0)
     card_maxed = _build_card_for_test(maxed, 0, 0)
 
-    assert card_tiny["width"] == card_maxed["width"] == 1200
-    assert card_tiny["height"] == card_maxed["height"] == 660
-    assert card_tiny["width"] == PERSONA_TEMPLATE["width"]
-    assert card_tiny["height"] == PERSONA_TEMPLATE["height"]
+    assert card_tiny["width"] == card_maxed["width"] == PERSONA_TEMPLATE["width"] == 1200
+    assert card_maxed["height"] >= card_tiny["height"], "more content must never produce a shorter card"
 
-    # Every shape's position/size must match exactly between the two cards -
-    # only "text" may differ.
-    for s1, s2 in zip(card_tiny["shapes"], card_maxed["shapes"]):
+    # Photo, name, role, quote, divider, and background stay at the exact
+    # same position/size regardless of content - only their text may differ.
+    locked_indices = (1, 3, 4, 5, 6, 7, 8)  # photo, name, role, quote, divider, bg_heading, bg_body
+    for i in locked_indices:
+        s1, s2 = card_tiny["shapes"][i], card_maxed["shapes"][i]
         assert s1["x"] == s2["x"] and s1["y"] == s2["y"]
         assert s1["width"] == s2["width"] and s1["height"] == s2["height"]
-        assert s1["shapeType"] == s2["shapeType"]
 
-    # Long content must be truncated to fit, not overflow the fixed zones -
-    # no shape's text should come out absurdly long.
-    for shape in card_maxed["shapes"]:
-        assert len(shape["text"]) < 400, "content must be truncated to fit the fixed template, not left to overflow"
+    # The header/quote/background zone's own text must still be truncated,
+    # never left to overflow.
+    for i in locked_indices:
+        assert len(card_maxed["shapes"][i]["text"]) < 400
+
+    # The grid's bullet text, by contrast, must NOT be aggressively cut -
+    # "write full things" means the actual finding survives close to intact.
+    long_goal = maxed["goals"][0]
+    grid_body_text = card_maxed["shapes"][10]["text"]  # goals: [9]=heading "GOALS", [10]=body
+    assert long_goal[:40] in grid_body_text, "grid content must not be truncated away, only the header section is"
 
 
 def test_persona_card_photo_and_identity_panel_use_sharp_corners():
@@ -509,6 +517,41 @@ def test_persona_card_name_is_not_a_participant_id():
     card = _build_card_for_test(persona, 0, 0)
     name_shape = card["shapes"][3]  # right_bg, photo, panel, name
     assert name_shape["text"] == "The Host"
+
+
+def test_persona_card_name_and_role_are_white_label_boxes():
+    # Per the reference the user provided: name/role render as white boxes
+    # with dark text sitting on the dark panel, not white text directly on
+    # the panel's own background.
+    card = _build_card_for_test(_make_test_personas(1)[0], 0, 0)
+    name_shape, role_shape = card["shapes"][3], card["shapes"][4]
+    assert name_shape["fillColor"] == "#FFFFFF"
+    assert role_shape["fillColor"] == "#FFFFFF"
+    assert name_shape["textColor"] != "#FFFFFF", "text on a white box must be dark, not white-on-white"
+    assert role_shape["textColor"] != "#FFFFFF"
+
+
+def test_persona_grid_body_grows_with_more_and_longer_content():
+    from figjam.persona_layout import _column_body_height
+
+    short = _column_body_height(["a", "b"])
+    long_items = _column_body_height([
+        "A much longer research finding that will need to wrap across multiple lines within the column",
+        "Another substantial finding that also needs real space to display without being cut short",
+    ])
+    assert long_items > short, "more/longer content must grow the body height, not get truncated to fit a fixed box"
+
+
+def test_fetch_avatar_image_returns_none_on_network_failure(monkeypatch):
+    import httpx
+    from figjam import persona_layout as pl
+
+    def _raise(*args, **kwargs):
+        raise httpx.ConnectError("simulated network failure")
+
+    monkeypatch.setattr(pl.httpx, "get", _raise)
+    assert pl._fetch_avatar_image("Test Persona") is None, \
+        "an avatar-service failure must not crash the push, just skip the fill"
 
 
 def test_persona_layout_no_overlaps_at_scale():

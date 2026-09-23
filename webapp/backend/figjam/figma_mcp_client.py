@@ -265,7 +265,7 @@ async def create_shape_with_text(
         # still comes back with cornerRadius=80 when read back via
         # figma_execute. Kept here as a harmless hint in case the server
         # starts honoring it, but callers needing real sharp corners must
-        # also call zero_corner_radius() after creation.
+        # also call apply_card_finish() after creation.
         args["cornerRadius"] = cornerRadius
     result = await sess.call_tool("figjam_create_shape_with_text", args)
     unwrapped = _unwrap(result)
@@ -302,6 +302,21 @@ async def apply_card_finish(sess: ClientSession, node_ids: list[str]) -> dict[st
     return {{ requested: ids.length, updated }};
     """
     result = await sess.call_tool("figma_execute", {"code": code})
+    return _unwrap(result)
+
+
+async def set_image_fill(sess: ClientSession, node_id: str, image_bytes: bytes) -> dict[str, Any]:
+    """Fills a node with the given raw image bytes. Confirmed live: this
+    tool's real parameters are nodeIds (an array) and imageData (a base64
+    string) - neither is documented in the tool's own (empty) schema; a
+    guessed nodeId/imageUrl shape fails validation with no useful message
+    until the raw Zod error is inspected directly."""
+    import base64
+
+    result = await sess.call_tool("figma_set_image_fill", {
+        "nodeIds": [node_id],
+        "imageData": base64.b64encode(image_bytes).decode("ascii"),
+    })
     return _unwrap(result)
 
 
