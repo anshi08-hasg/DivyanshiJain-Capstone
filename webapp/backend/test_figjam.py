@@ -14,7 +14,8 @@ from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidenc
 from figjam.figma_layout import build_layout_plan
 from figjam import personas as personas_module
 from figjam.personas import generate_personas
-from figjam.persona_layout import build_persona_layout_plan
+from figjam.persona_layout import build_persona_layout_plan, _validate_layout
+from figjam.layout_geometry import Rect, rects_overlap, find_overlap, assert_no_overlaps, bounding_box, grid_positions
 from llm_providers import OpenAIProvider, get_provider
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "frontend"))
@@ -231,6 +232,55 @@ def test_layout_plan_empty_analysis_produces_no_sections():
     assert build_layout_plan({}) == []
 
 
+def test_layout_plan_uses_real_sticky_size_no_overlaps():
+    # Confirmed live against the real figjam_create_stickies tool: a sticky
+    # is ALWAYS a fixed 240x240 square (width/height params are silently
+    # ignored). The previous constants here (220 wide, 140 tall) were both
+    # smaller than reality, which is exactly why stickies visually
+    # overlapped - rows spaced 140px apart with 240px-tall stickies overlap
+    # by 100px. This locks in the corrected, measured size.
+    from figjam.figma_layout import STICKY_SIZE
+    assert STICKY_SIZE == 240
+
+    analysis = {
+        "themes": [{"id": f"TH{i}", "name": f"Theme {i}", "evidence": []} for i in range(8)],
+        "insights": [{"id": f"INS{i}", "statement": f"Insight {i}", "verdict": "weak"} for i in range(12)],
+        "contradictions": [{"id": f"CON{i}", "description": f"Con {i}"} for i in range(5)],
+        "research_gaps": [f"Gap {i}" for i in range(6)],
+        "design_opportunities": [f"Opp {i}" for i in range(7)],
+    }
+    plan = build_layout_plan(analysis)
+
+    section_rects = [Rect(s["x"], s["y"], s["width"], s["height"]) for s in plan]
+    assert find_overlap(section_rects) is None, "sections must never overlap regardless of item count"
+
+    for section in plan:
+        assert find_overlap(section["sticky_rects"]) is None, f"stickies in '{section['title']}' overlap"
+        for rect in section["sticky_rects"]:
+            assert rect.width == 240 and rect.height == 240
+
+
+def test_layout_geometry_rects_overlap_and_grid():
+    a = Rect(0, 0, 100, 100)
+    b = Rect(50, 50, 100, 100)
+    c = Rect(200, 0, 100, 100)
+    assert rects_overlap(a, b) is True
+    assert rects_overlap(a, c) is False
+
+    touching = Rect(100, 0, 100, 100)
+    assert rects_overlap(a, touching, margin=0) is False, "edge-touching rects with no margin must not count as overlapping"
+    assert rects_overlap(a, touching, margin=10) is True, "a margin must catch near-touching rects too"
+
+    bbox = bounding_box([a, c])
+    assert bbox == Rect(0, 0, 300, 100)
+    assert bounding_box([]) is None
+
+    grid = grid_positions(5, columns=2, cell_width=100, cell_height=50, h_gap=10, v_gap=10)
+    assert len(grid) == 5
+    assert find_overlap(grid) is None
+    assert_no_overlaps(grid)  # must not raise
+
+
 class _FakePersonaProvider:
     """Stands in for llm_providers.get_provider() in persona tests, the same
     approach the rest of this pipeline uses to test evidence verification
@@ -368,36 +418,92 @@ def test_persona_false_verbatim_claim_is_downgraded(monkeypatch):
     assert quote["source_id"] is None
 
 
-def test_persona_layout_plan_uses_valid_colors_and_positions_cards_horizontally():
-    personas = [
-        {
-            "id": "PERSONA1", "name": "Alex", "short_description": "desc",
-            "profile": {"role": "Student", "age": None, "location": None, "digital_behaviour": None},
-            "goals": ["g1", "g2"], "behaviours": ["b1"], "pain_points": ["p1"], "needs": ["n1"],
-            "motivations": ["m1"], "representative_quote": {"text": "q", "is_verbatim": False, "source_id": None},
-            "evidence": ["N1"],
-        },
-        {
-            "id": "PERSONA2", "name": "Sam", "short_description": "desc",
-            "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [],
-            "motivations": [], "representative_quote": {"text": "", "is_verbatim": False, "source_id": None},
-            "evidence": ["N2"],
-        },
-    ]
-    plan = build_persona_layout_plan(personas)
-    assert len(plan) == 2
-    assert plan[1]["x"] > plan[0]["x"], "cards must be arranged left to right, not stacked at the same position"
-    assert plan[0]["x"] == 0
+def _make_test_personas(n, content_size=1):
+    return [{
+        "id": f"PERSONA{i}", "name": f"Persona {i}", "short_description": "desc",
+        "profile": {"role": "Student", "age": None, "location": None, "digital_behaviour": None},
+        "goals": [f"g{j}" for j in range(content_size)],
+        "behaviours": [f"b{j}" for j in range(content_size)],
+        "pain_points": [f"p{j}" for j in range(content_size)],
+        "needs": [f"n{j}" for j in range(content_size)],
+        "motivations": [f"m{j}" for j in range(content_size)],
+        "representative_quote": {"text": "q", "is_verbatim": False, "source_id": None},
+        "evidence": [f"R{i:03d}"],
+    } for i in range(n)]
 
-    valid_colors = {"YELLOW", "BLUE", "GREEN", "PINK", "ORANGE", "PURPLE", "RED", "LIGHT_GRAY", "GRAY"}
-    for card in plan:
-        assert card["width"] > 0 and card["height"] > 0
-        for sticky in card["stickies"]:
-            assert sticky["color"] in valid_colors
+
+def test_persona_layout_plan_uses_shape_cards_not_stickies_and_positions_grid():
+    # Personas must be built from figjam_create_shape_with_text (a real,
+    # custom-sized shape) - NEVER figjam_create_stickies, confirmed live to
+    # be a fixed 240x240 square that can't hold a structured card layout.
+    plan = build_persona_layout_plan(_make_test_personas(4))
+    assert len(plan["cards"]) == 4
+    for card in plan["cards"]:
+        assert "stickies" not in card
+        for shape in card["shapes"]:
+            assert "color" not in shape, "must use fillColor (hex), not the sticky color enum"
+            assert shape["shapeType"] == "ROUNDED_RECTANGLE"
+
+    # 4 personas -> 2x2 grid per the exact examples given: row 0 = cards 0,1; row 1 = cards 2,3.
+    c0, c1, c2, c3 = plan["cards"]
+    assert c1["x"] > c0["x"] and c1["y"] == c0["y"], "first row must be side by side"
+    assert c2["y"] > c0["y"] and c2["x"] == c0["x"], "second row must start below the first, aligned left"
+    assert c3["x"] > c2["x"] and c3["y"] == c2["y"]
 
 
 def test_persona_layout_plan_empty_list_produces_no_cards():
-    assert build_persona_layout_plan([]) == []
+    plan = build_persona_layout_plan([])
+    assert plan["cards"] == []
+    assert plan["section"] is None
+
+
+def test_persona_layout_no_overlaps_at_scale():
+    # The explicit scalability requirement: this must hold for any content
+    # size, not just the current 6-participant board.
+    for n in (1, 2, 3, 4, 5, 8):
+        plan = build_persona_layout_plan(_make_test_personas(n, content_size=4))
+        _validate_layout(plan)  # raises on any overlap
+
+        card_rects = [Rect(c["x"], c["y"], c["width"], c["height"]) for c in plan["cards"]]
+        assert find_overlap(card_rects) is None, f"{n} personas: cards overlap"
+        for card in plan["cards"]:
+            assert card["x"] >= 0 and card["y"] >= 0 and card["width"] > 0 and card["height"] > 0
+
+
+def test_persona_layout_starts_clear_of_existing_content():
+    # Part 2/9: the Personas section must never overlap existing synthesis
+    # sections, positioned dynamically (not a hardcoded coordinate).
+    plan_at_origin = build_persona_layout_plan(_make_test_personas(2), start_x=0)
+    plan_offset = build_persona_layout_plan(_make_test_personas(2), start_x=5000)
+
+    assert plan_at_origin["section"]["x"] == 0
+    assert plan_offset["section"]["x"] == 5000
+    for card in plan_offset["cards"]:
+        assert card["x"] >= 5000, "cards must respect the requested start_x, not reset to 0"
+
+
+def test_persona_cards_carry_evidence_ids_in_their_footer_shape():
+    plan = build_persona_layout_plan(_make_test_personas(1))
+    evidence_shape = plan["cards"][0]["shapes"][-1]
+    assert "RESEARCH EVIDENCE" in evidence_shape["text"]
+    assert "R000" in evidence_shape["text"]
+
+
+def test_find_existing_content_right_edge_covers_every_node_not_just_sections():
+    # Confirmed live: the real primary-research stickies (P1-P6) sit loose
+    # on the page, not inside any section - checking only ResearchMate's own
+    # reserved section names would miss them, letting a new Personas section
+    # land right on top of the original research notes. Every node counts.
+    from figjam.persona_layout import _find_existing_content_right_edge
+
+    board_data = {"nodes": [
+        {"type": "SECTION", "name": "Themes", "x": 0, "width": 900},
+        {"type": "SECTION", "name": "Insights", "x": 950, "width": 900},
+        {"type": "STICKY", "name": "P1: some research note", "x": 9999, "width": 240},
+    ]}
+    assert _find_existing_content_right_edge(board_data) == 10239
+
+    assert _find_existing_content_right_edge({"nodes": []}) == 0
 
 
 def test_generate_personas_route_step_activity_excludes_unrelated_prior_steps(monkeypatch):

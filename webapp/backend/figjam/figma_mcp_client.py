@@ -235,6 +235,27 @@ async def create_stickies(sess: ClientSession, stickies: list[dict[str, Any]]) -
     return _unwrap(result)
 
 
+async def create_shape_with_text(
+    sess: ClientSession, text: str, x: float, y: float, width: float, height: float,
+    shapeType: str = "ROUNDED_RECTANGLE", fillColor: str | None = None,
+) -> dict[str, Any]:
+    """A real, editable shape with embedded text - unlike figjam_create_stickies
+    (a fixed 240x240 sticky note, confirmed live width/height are ignored),
+    this genuinely respects custom width/height, so it's used for persona
+    cards where a fixed sticky size can't hold a structured multi-zone
+    layout. shapeType options confirmed live: ROUNDED_RECTANGLE (default),
+    DIAMOND, ELLIPSE, TRIANGLE_UP, TRIANGLE_DOWN, PARALLELOGRAM_RIGHT,
+    PARALLELOGRAM_LEFT, ENG_DATABASE, ENG_QUEUE, ENG_FILE, ENG_FOLDER.
+    fillColor, if given, must be a "#RRGGBB" hex string."""
+    args: dict[str, Any] = {
+        "text": text, "x": x, "y": y, "width": width, "height": height, "shapeType": shapeType,
+    }
+    if fillColor:
+        args["fillColor"] = fillColor
+    result = await sess.call_tool("figjam_create_shape_with_text", args)
+    return _unwrap(result)
+
+
 async def create_section(
     sess: ClientSession, name: str, x: float, y: float, width: float = 1000, height: float = 800,
     fill_color: str | None = None,

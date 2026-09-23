@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import figma_mcp_client as mcp_client
+from .layout_geometry import Rect, assert_no_overlaps, grid_positions
 
 # figjam_create_stickies only accepts this fixed color enum (confirmed via the
 # live tool schema), not arbitrary hex values.
@@ -38,11 +39,19 @@ _SECTION_TITLES = {
     "design_opportunities": "Design Opportunities",
 }
 
-_COLUMN_WIDTH = 900
-_STICKY_WIDTH = 220
-_ROW_HEIGHT = 140
-_STICKIES_PER_ROW = 4
-_SECTION_PADDING = 60
+# Confirmed live against the real figjam_create_stickies tool: a sticky note
+# is ALWAYS a fixed 240x240 square - passing width/height is silently
+# ignored. The previous constants here (220 wide, 140 tall) were both wrong,
+# which is exactly why stickies visually overlapped: rows spaced 140px apart
+# with 240px-tall stickies overlap by 100px, and columns spaced 220px apart
+# with 240px-wide stickies overlap by 20px.
+STICKY_SIZE = 240
+H_GAP = 24
+V_GAP = 24
+STICKIES_PER_ROW = 3
+SECTION_PADDING = 48
+SECTION_HEADER_HEIGHT = 0  # figjam_create_section renders its own title bar; content starts at section (x, y)
+SECTION_GAP = 80
 
 
 def _item_text(section_key: str, item: Any) -> str:
@@ -57,9 +66,14 @@ def _item_text(section_key: str, item: Any) -> str:
 
 
 def build_layout_plan(analysis: dict[str, Any]) -> list[dict[str, Any]]:
-    """Returns a list of section plans: [{key, title, color, x, y, width, height, items}]."""
-    plan = []
-    column_x = 0
+    """Returns a list of section plans: [{key, title, color, x, y, width, height, items, sticky_rects}].
+    Section width/height and every sticky's rect are derived from the real,
+    fixed 240x240 sticky size, and each section's x is offset by the
+    previous section's actual computed width (not a fixed guess), so this
+    still produces a non-overlapping layout regardless of how many items any
+    given section ends up with."""
+    plan: list[dict[str, Any]] = []
+    cursor_x = 0.0
 
     for key in ("themes", "insights", "contradictions", "research_gaps", "design_opportunities"):
         raw_items = analysis.get(key, [])
@@ -71,22 +85,39 @@ def build_layout_plan(analysis: dict[str, Any]) -> list[dict[str, Any]]:
         else:
             texts = [_item_text(key, item) for item in raw_items]
 
-        rows = -(-len(texts) // _STICKIES_PER_ROW)  # ceil division
-        width = _SECTION_PADDING * 2 + min(len(texts), _STICKIES_PER_ROW) * _STICKY_WIDTH
-        height = _SECTION_PADDING * 2 + rows * _ROW_HEIGHT
+        columns = min(len(texts), STICKIES_PER_ROW)
+        rows = -(-len(texts) // STICKIES_PER_ROW)  # ceil division
+        width = SECTION_PADDING * 2 + columns * STICKY_SIZE + max(columns - 1, 0) * H_GAP
+        height = SECTION_PADDING * 2 + rows * STICKY_SIZE + max(rows - 1, 0) * V_GAP
+
+        # Section-relative coordinates (origin at the section's own top-left,
+        # not the board origin) - push_layout_to_figjam adds section["x"]/["y"]
+        # when creating the actual stickies, so this must NOT also include
+        # cursor_x or it would be added twice.
+        sticky_rects = grid_positions(
+            count=len(texts),
+            columns=STICKIES_PER_ROW,
+            cell_width=STICKY_SIZE,
+            cell_height=STICKY_SIZE,
+            h_gap=H_GAP,
+            v_gap=V_GAP,
+            origin_x=SECTION_PADDING,
+            origin_y=SECTION_PADDING,
+        )
 
         plan.append({
             "key": key,
             "title": _SECTION_TITLES[key],
             "sticky_color": _SECTION_COLORS[key],
             "fill_color": _SECTION_FILL_HEX[key],
-            "x": column_x,
+            "x": cursor_x,
             "y": 0,
             "width": width,
             "height": height,
             "items": texts,
+            "sticky_rects": sticky_rects,
         })
-        column_x += _COLUMN_WIDTH
+        cursor_x += width + SECTION_GAP
 
     return plan
 
@@ -97,6 +128,13 @@ async def push_layout_to_figjam(analysis: dict[str, Any]) -> dict[str, Any]:
     plan = build_layout_plan(analysis)
     if not plan:
         raise ValueError("Nothing to push: run analysis first, there are no themes/insights/etc. yet.")
+
+    # Sections are checked separately from their own stickies (a sticky is
+    # expected to sit inside its own section, that's not a collision) but no
+    # two DIFFERENT sections' content may overlap.
+    assert_no_overlaps([Rect(s["x"], s["y"], s["width"], s["height"]) for s in plan], label="sections")
+    for section in plan:
+        assert_no_overlaps(section["sticky_rects"], label=f"stickies in '{section['title']}'")
 
     activity: list[str] = []
     created_stickies = 0
@@ -120,11 +158,11 @@ async def push_layout_to_figjam(analysis: dict[str, Any]) -> dict[str, Any]:
             stickies = [
                 {
                     "text": text,
-                    "x": section["x"] + _SECTION_PADDING + (i % _STICKIES_PER_ROW) * _STICKY_WIDTH,
-                    "y": section["y"] + _SECTION_PADDING + (i // _STICKIES_PER_ROW) * _ROW_HEIGHT,
+                    "x": section["x"] + rect.x,
+                    "y": section["y"] + rect.y,
                     "color": section["sticky_color"],
                 }
-                for i, text in enumerate(section["items"])
+                for text, rect in zip(section["items"], section["sticky_rects"])
             ]
             await mcp_client.create_stickies(sess, stickies)
             created_stickies += len(stickies)

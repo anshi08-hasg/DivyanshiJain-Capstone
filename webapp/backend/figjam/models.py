@@ -15,13 +15,17 @@ ResearchItemType = Literal["sticky", "text", "section", "group", "unknown"]
 
 # Section names ResearchMate itself creates when pushing its own output back
 # to the board (figma_layout.py's _SECTION_TITLES, persona_layout.py's
-# "Persona: <name>" cards). Confirmed live: after a Push to FigJam or Push
+# "User personas" section). Confirmed live: after a Push to FigJam or Push
 # Personas, re-connecting to the same board reads those sections back as if
 # they were ordinary research - without this filter, a later Analyze or
 # Generate Personas call would be fed its own prior output as "evidence"
 # alongside the real participant research, silently compounding on itself.
+# "Persona: " is kept for backwards compatibility with boards that already
+# have per-persona sections from before personas were grouped into one
+# "User personas" section.
 _RESEARCHMATE_OWN_SECTION_NAMES = {
     "Themes", "Insights", "Contradictions", "Research Gaps", "Design Opportunities",
+    "User personas",
 }
 _RESEARCHMATE_OWN_SECTION_PREFIX = "Persona: "
 

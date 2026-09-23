@@ -506,7 +506,7 @@ pushPersonasBtn.addEventListener("click", async () => {
     if (!res.ok) throw new Error(data.error || "Could not push personas to FigJam.");
 
     appendStatusStep("Pushed to FigJam ✓");
-    pushPersonasSuccess.textContent = `Created ${data.stickies_created} element(s) across ${data.personas.length} persona card(s): ${data.personas.join(", ")}.`;
+    pushPersonasSuccess.textContent = `Created ${data.elements_created} element(s) across ${data.personas.length} persona card(s): ${data.personas.join(", ")}.`;
     pushPersonasSuccess.hidden = false;
     data.activity.forEach((label) => {
       const li = document.createElement("li");
