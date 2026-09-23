@@ -26,6 +26,10 @@ const pushPersonasBtn = document.getElementById("push-personas-btn");
 const pushPersonasError = document.getElementById("push-personas-error");
 const pushPersonasSuccess = document.getElementById("push-personas-success");
 
+const personaPreviewsSection = document.getElementById("persona-previews-section");
+const personaPreviewsList = document.getElementById("persona-previews-list");
+const personaPreviewsError = document.getElementById("persona-previews-error");
+
 const askSection = document.getElementById("ask-section");
 const askTranscript = document.getElementById("ask-transcript");
 const askInput = document.getElementById("ask-input");
@@ -78,6 +82,9 @@ connectBtn.addEventListener("click", async () => {
     personasStatusList.innerHTML = "";
     personasStatusList.hidden = true;
     pushPersonasBar.hidden = true;
+    personaPreviewsSection.hidden = true;
+    personaPreviewsList.innerHTML = "";
+    personaPreviewsError.hidden = true;
     state.personas = [];
 
     overviewGrid.innerHTML = [
@@ -444,6 +451,74 @@ function renderPersonaCard(persona) {
   return card;
 }
 
+// Builds the downloadable persona image previews. This reuses the exact
+// persona objects already returned by /api/figjam/generate-personas (the
+// same data renderPersonaCard() above already displays) - no second Groq
+// request, one canonical PersonaRenderer (persona_renderer.js) decides the
+// visual design, the persona data only decides the content.
+function renderPersonaPreviews(personas) {
+  personaPreviewsList.innerHTML = "";
+  personaPreviewsError.hidden = true;
+
+  if (!personas || personas.length === 0) {
+    personaPreviewsError.textContent = "Persona preview is unavailable because persona generation did not complete.";
+    personaPreviewsError.hidden = false;
+    personaPreviewsSection.hidden = false;
+    return;
+  }
+
+  personas.forEach((persona) => {
+    const card = document.createElement("div");
+    card.className = "persona-preview-card";
+
+    const title = document.createElement("h4");
+    title.textContent = persona.name || "Unnamed persona";
+    card.appendChild(title);
+
+    const canvasWrap = document.createElement("div");
+    canvasWrap.className = "persona-preview-canvas-wrap";
+    const canvas = document.createElement("canvas");
+    canvas.className = "persona-preview-canvas";
+    canvasWrap.appendChild(canvas);
+    card.appendChild(canvasWrap);
+
+    try {
+      renderPersonaToCanvas(persona, canvas);
+    } catch (err) {
+      canvasWrap.remove();
+      const errorP = document.createElement("p");
+      errorP.className = "persona-preview-card-error";
+      errorP.textContent = "Persona preview is unavailable because persona generation did not complete.";
+      card.appendChild(errorP);
+      personaPreviewsList.appendChild(card);
+      return;
+    }
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
+    downloadBtn.className = "btn btn-secondary";
+    downloadBtn.textContent = "Download Persona PNG";
+    downloadBtn.addEventListener("click", () => {
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = sanitizePersonaFilename(persona.name);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    });
+    card.appendChild(downloadBtn);
+
+    personaPreviewsList.appendChild(card);
+  });
+
+  personaPreviewsSection.hidden = false;
+}
+
 function appendStatusStep(label) {
   personasStatusList.hidden = false;
   const li = document.createElement("li");
@@ -482,12 +557,14 @@ generatePersonasBtn.addEventListener("click", async () => {
 
     state.personas = data.personas || [];
     state.personas.forEach((p) => personasList.appendChild(renderPersonaCard(p)));
+    renderPersonaPreviews(state.personas);
 
     pushPersonasBar.hidden = false;
   } catch (err) {
     appendStatusStep(`✗ ${err.message}`);
     personasError.textContent = err.message;
     personasError.hidden = false;
+    personaPreviewsSection.hidden = true;
   } finally {
     setBusy(generatePersonasBtn, false, "Generate Personas in FigJam");
   }
