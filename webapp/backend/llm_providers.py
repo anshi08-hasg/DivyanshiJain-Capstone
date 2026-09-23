@@ -2,8 +2,13 @@
 
 The Pattern Analyzer logic (pattern_analyzer.py) talks to whatever provider
 is returned by get_provider() and never imports a specific vendor SDK
-directly, so the webapp can run against Claude, OpenAI, or fully offline
-(MockProvider) without any code changes elsewhere.
+directly, so the webapp can run against Claude, OpenAI, Groq, or fully
+offline (MockProvider) without any code changes elsewhere.
+
+Groq is served through OpenAIProvider itself (Groq's API is
+OpenAI-compatible; only the base_url and default model differ), not a
+separate provider class, per the existing "no duplicated provider logic"
+design - see get_provider() below.
 """
 
 import abc
@@ -33,45 +38,67 @@ class AnthropicProvider(LLMProvider):
         return "".join(block.text for block in response.content if block.type == "text")
 
 
-class GeminiProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str):
-        import google.generativeai as genai
-
-        genai.configure(api_key=api_key)
-        self._model = genai.GenerativeModel(model_name=model, system_instruction=None)
-        self._system_prompt_cache = None
-        self._model_name = model
-        self._genai = genai
-
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        # Rebuild the model only when the system prompt changes, since Gemini
-        # takes system_instruction at model-construction time, not per-call.
-        if system_prompt != self._system_prompt_cache:
-            self._model = self._genai.GenerativeModel(
-                model_name=self._model_name, system_instruction=system_prompt
-            )
-            self._system_prompt_cache = system_prompt
-
-        response = self._model.generate_content(user_prompt)
-        return response.text
-
-
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str):
+    """Talks to any OpenAI-compatible chat completions API. Used directly
+    for real OpenAI, and reused as-is for Groq (get_provider() just passes a
+    different base_url/model) since Groq's API is a drop-in-compatible
+    superset of the same client library - a separate GroqProvider class
+    would only duplicate this exact request/response shape."""
+
+    def __init__(self, api_key: str, model: str, base_url: str | None = None):
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key)
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
         self._model = model
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        return response.choices[0].message.content
+        # json_object mode makes the response reliably parseable JSON rather
+        # than trusting the model to follow the "respond with ONLY a JSON
+        # object" instruction unaided - every system prompt in this project
+        # already contains the word "json" (required by this mode) as part
+        # of its own output-format instructions.
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                response_format={"type": "json_object"},
+                messages=messages,
+            )
+            return response.choices[0].message.content
+        except Exception as exc:  # noqa: BLE001
+            # Confirmed live against Groq's openai/gpt-oss-120b: its own
+            # json_object grammar-constrained decoding occasionally rejects
+            # output that is, on inspection, genuinely valid JSON (error
+            # code "json_validate_failed"). The API still returns that exact
+            # generated text in the error body's "failed_generation" field,
+            # so recover it directly instead of failing the whole request -
+            # the caller's own _parse_json already validates it independently.
+            recovered = _extract_failed_generation(exc)
+            if recovered is not None:
+                return recovered
+            raise
+
+
+def _extract_failed_generation(exc: Exception) -> str | None:
+    """Pulls the model's raw text out of a Groq json_validate_failed error
+    body, if that's what this is. Returns None for any other kind of error
+    (missing/invalid key, rate limit, real malformed output, etc.), which
+    the caller re-raises unchanged.
+
+    Confirmed live against a real Groq 400 response: the openai SDK's
+    exc.body is the flat error object itself (code/message/failed_generation
+    at the top level), NOT wrapped in an outer {"error": {...}} - that
+    wrapper only appears in str(exc)'s human-readable text, not in .body.
+    An earlier version of this function assumed the wrapped shape and would
+    have silently returned None (never recovering) against a real error."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict) or body.get("code") != "json_validate_failed":
+        return None
+    text = body.get("failed_generation")
+    return text or None
 
 
 class MockProvider(LLMProvider):
@@ -85,6 +112,8 @@ class MockProvider(LLMProvider):
     """
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
+        if "Persona Synthesist" in system_prompt:
+            return _MOCK_FIGJAM_PERSONAS_RESPONSE
         if "Research Critic" in system_prompt:
             return _MOCK_FIGJAM_CRITIC_RESPONSE
         if "FigJam Research Agent answering" in system_prompt:
@@ -167,6 +196,41 @@ _MOCK_FIGJAM_CRITIC_RESPONSE = """
 }
 """
 
+_MOCK_FIGJAM_PERSONAS_RESPONSE = """
+{
+  "personas": [
+    {
+      "id": "PERSONA1",
+      "name": "The Early Arriver",
+      "archetype": "Proactive space claimer",
+      "short_description": "A student who treats quiet study space as something you have to claim early, not something that's simply available.",
+      "profile": {"role": "Student", "age": null, "location": null, "digital_behaviour": null},
+      "goals": ["Find a quiet, reliable place to study during exam weeks", "Avoid wasting time hunting for space"],
+      "behaviours": ["Arrives very early (around 7am) to secure a spot", "Moves to a different location (dorm) when the usual space is too loud"],
+      "pain_points": ["Quiet rooms fill up fast during exams", "Study spaces get crowded and noisy during high-demand periods"],
+      "needs": ["Predictable availability of quiet space", "More capacity during exam periods specifically"],
+      "motivations": ["Wants to avoid the stress of not finding a seat", "Values a consistent, distraction-free environment"],
+      "representative_quote": {"text": "I always camp outside the silent room at 7am during finals, otherwise there's nowhere quiet left by 9.", "is_verbatim": true, "source_id": "N2"},
+      "evidence": ["N2", "N3", "N4"]
+    },
+    {
+      "id": "PERSONA2",
+      "name": "The Planner",
+      "archetype": "Advance-booking organizer",
+      "short_description": "A student who books group spaces ahead of time rather than risk showing up to nothing available.",
+      "profile": {"role": "Student", "age": null, "location": null, "digital_behaviour": "Books rooms online in advance"},
+      "goals": ["Guarantee a group room is available for project meetings"],
+      "behaviours": ["Books the group room online the night before"],
+      "pain_points": ["Without booking ahead, the group ends up wandering the floor looking for space"],
+      "needs": ["A reliable booking system for group rooms"],
+      "motivations": ["Wants certainty over convenience"],
+      "representative_quote": {"text": "Booking ahead is the only way I've found to guarantee we actually get a room for project meetings.", "is_verbatim": true, "source_id": "N12"},
+      "evidence": ["N11", "N12"]
+    }
+  ]
+}
+"""
+
 _MOCK_FIGJAM_ASK_RESPONSE = """
 {
   "answer": "The strongest recurring pattern is exam-period noise and crowding in the study space, reported independently by three participants (N2, N3, N4). A second, weaker pattern involves the accessible entrance being hard to find (N7, N8).",
@@ -174,6 +238,9 @@ _MOCK_FIGJAM_ASK_RESPONSE = """
   "grounded": true
 }
 """
+
+
+_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 def get_provider() -> LLMProvider:
@@ -191,13 +258,20 @@ def get_provider() -> LLMProvider:
             model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         )
 
-    if provider_name == "gemini" or (not provider_name and os.environ.get("GEMINI_API_KEY")):
-        return GeminiProvider(
-            api_key=os.environ["GEMINI_API_KEY"],
-            model=os.environ.get("GEMINI_MODEL", "gemini-3.6-flash"),
+    if provider_name == "groq" or (not provider_name and os.environ.get("GROQ_API_KEY")):
+        if not os.environ.get("GROQ_API_KEY", "").strip():
+            raise ValueError(
+                "LLM_PROVIDER is set to 'groq' but GROQ_API_KEY is not set. "
+                "Get a key from console.groq.com and set GROQ_API_KEY in .env "
+                "(or as a Railway service variable in production)."
+            )
+        return OpenAIProvider(
+            api_key=os.environ["GROQ_API_KEY"],
+            model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
+            base_url=_GROQ_BASE_URL,
         )
 
     if provider_name in ("", "mock"):
         return MockProvider()
 
-    raise ValueError(f"Unknown LLM_PROVIDER: {provider_name!r} (expected anthropic, openai, gemini, or mock)")
+    raise ValueError(f"Unknown LLM_PROVIDER: {provider_name!r} (expected anthropic, openai, groq, or mock)")

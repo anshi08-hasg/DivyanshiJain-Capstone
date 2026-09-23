@@ -1,12 +1,14 @@
 """Orchestrates the FigJam Research Agent pipeline.
 
-Retrieve (adapter) -> Normalize (normalize.py, code) -> Analyze (Gemini) ->
-Critique (Gemini, second pass) -> Structure (code, evidence verification).
+Retrieve (adapter) -> Normalize (normalize.py, code) -> Analyze (LLM) ->
+Critique (LLM, second pass) -> Structure (code, evidence verification).
 
 Deterministic bookkeeping (counting items, verifying citation IDs actually
-exist, building the activity log) is done in plain Python. Gemini is only
-used for the two reasoning steps: synthesizing themes/insights and
-critiquing them, per the "code = data, Gemini = reasoning" split.
+exist, building the activity log) is done in plain Python. The LLM
+(whichever provider llm_providers.get_provider() resolves to - Groq by
+default in this deployment) is only used for the two reasoning steps:
+synthesizing themes/insights and critiquing them, per the "code = data,
+LLM = reasoning" split.
 """
 
 from __future__ import annotations
@@ -156,16 +158,20 @@ def _parse_json(raw: str) -> dict[str, Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise FigJamAgentError(f"Gemini returned malformed JSON ({exc}). Raw output:\n{raw}") from exc
+        raise FigJamAgentError(f"The LLM returned malformed JSON ({exc}). Raw output:\n{raw}") from exc
 
 
 def _valid_ids(context: FigJamResearchContext) -> set[str]:
-    return {item.id for item in context.items}
+    # Deliberately excludes ResearchMate's own previously-pushed sections
+    # (see FigJamResearchContext.primary_research_items) - citing one of
+    # those ids back is not real evidence, it's citing the app's own prior
+    # output.
+    return {item.id for item in context.primary_research_items()}
 
 
 def _verify_evidence(context: FigJamResearchContext, evidence_ids: list[str]) -> tuple[list[str], bool]:
-    """Returns (verified_ids, unsupported). Drops any id Gemini invented that
-    doesn't exist in the actual retrieved board, per "do not allow Gemini to
+    """Returns (verified_ids, unsupported). Drops any id the LLM invented that
+    doesn't exist in the actual retrieved board, per "do not allow the LLM to
     invent evidence" - this is enforced in code, not trusted from the model."""
     valid = _valid_ids(context)
     verified = [i for i in evidence_ids if i in valid]
@@ -174,7 +180,7 @@ def _verify_evidence(context: FigJamResearchContext, evidence_ids: list[str]) ->
 
 def _evidence_confidence(context: FigJamResearchContext, verified_ids: list[str]) -> dict[str, Any]:
     """Confidence is computed in code from the amount and diversity of
-    verified evidence, never from Gemini's own self-assessment - a model
+    verified evidence, never from the LLM's own self-assessment - a model
     saying "strong" is not evidence of anything."""
     items_by_id = {item.id: item for item in context.items}
     participants = sorted({
@@ -201,19 +207,19 @@ def _evidence_confidence(context: FigJamResearchContext, verified_ids: list[str]
 
 def _context_prompt(context: FigJamResearchContext) -> str:
     lines = [f"Board: {context.board_name}", ""]
-    for item in context.items:
+    for item in context.primary_research_items():
         section = f" [{item.section}]" if item.section else ""
         lines.append(f"{item.id} ({item.type}){section}: {item.content}")
     return "\n".join(lines)
 
 
 def analyze_research(context: FigJamResearchContext) -> dict[str, Any]:
-    """Runs Analyze (Gemini) + Critique (Gemini) + evidence verification (code)."""
+    """Runs Analyze (LLM) + Critique (LLM) + evidence verification (code)."""
     activity: list[dict[str, Any]] = []
     provider = get_provider()
     user_prompt = _context_prompt(context)
 
-    activity.append(_step("Sent research context to Gemini (Pattern Finder)"))
+    activity.append(_step("Sent research context to the LLM (Pattern Finder)"))
     raw = provider.complete(ANALYZE_SYSTEM_PROMPT, user_prompt)
     findings = _parse_json(raw)
 
@@ -235,7 +241,7 @@ def analyze_research(context: FigJamResearchContext) -> dict[str, Any]:
     activity.append(_step(f"Identified {len(research_gaps)} research gap(s)"))
     activity.append(_step("Generated research opportunities"))
 
-    activity.append(_step("Sent candidate insights to Gemini (Research Critic)"))
+    activity.append(_step("Sent candidate insights to the LLM (Research Critic)"))
     critic_prompt = user_prompt + "\n\n## Candidate insights\n" + json.dumps(insights, indent=2)
     raw_critic = provider.complete(CRITIC_SYSTEM_PROMPT, critic_prompt)
     critique = _parse_json(raw_critic)

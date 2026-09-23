@@ -235,6 +235,91 @@ async def create_stickies(sess: ClientSession, stickies: list[dict[str, Any]]) -
     return _unwrap(result)
 
 
+async def create_shape_with_text(
+    sess: ClientSession, text: str, x: float, y: float, width: float, height: float,
+    shapeType: str = "ROUNDED_RECTANGLE", fillColor: str | None = None,
+    textColor: str | None = None, fontSize: float | None = None,
+    cornerRadius: float | None = None,
+) -> dict[str, Any]:
+    """A real, editable shape with embedded text - unlike figjam_create_stickies
+    (a fixed 240x240 sticky note, confirmed live width/height are ignored),
+    this genuinely respects custom width/height, so it's used for persona
+    cards where a fixed sticky size can't hold a structured multi-zone
+    layout. shapeType options confirmed live: ROUNDED_RECTANGLE (default),
+    DIAMOND, ELLIPSE, TRIANGLE_UP, TRIANGLE_DOWN, PARALLELOGRAM_RIGHT,
+    PARALLELOGRAM_LEFT, ENG_DATABASE, ENG_QUEUE, ENG_FILE, ENG_FOLDER.
+    fillColor/textColor, if given, must be "#RRGGBB" hex strings.
+    cornerRadius=0 gives ROUNDED_RECTANGLE sharp (non-rounded) corners."""
+    args: dict[str, Any] = {
+        "text": text, "x": x, "y": y, "width": width, "height": height, "shapeType": shapeType,
+    }
+    if fillColor:
+        args["fillColor"] = fillColor
+    if textColor:
+        args["textColor"] = textColor
+    if fontSize:
+        args["fontSize"] = fontSize
+    if cornerRadius is not None:
+        # Confirmed live: this parameter is silently ignored by
+        # figjam_create_shape_with_text - a shape created with cornerRadius=0
+        # still comes back with cornerRadius=80 when read back via
+        # figma_execute. Kept here as a harmless hint in case the server
+        # starts honoring it, but callers needing real sharp corners must
+        # also call apply_card_finish() after creation.
+        args["cornerRadius"] = cornerRadius
+    result = await sess.call_tool("figjam_create_shape_with_text", args)
+    unwrapped = _unwrap(result)
+    try:
+        unwrapped["node_id"] = json.loads(unwrapped["raw_text"])["data"]["id"]
+    except (KeyError, json.JSONDecodeError):
+        pass
+    return unwrapped
+
+
+async def apply_card_finish(sess: ClientSession, node_ids: list[str]) -> dict[str, Any]:
+    """Forces sharp (non-rounded) corners and removes the default stroke on
+    the given nodes via figma_execute (direct Figma Plugin API access).
+    Confirmed live: figjam_create_shape_with_text's cornerRadius parameter
+    is silently ignored (a shape created with cornerRadius=0 still comes
+    back reporting cornerRadius=80), and every shape carries a visible
+    default gray stroke that fillColor alone doesn't remove - both need
+    fixing directly through the plugin API after creation. Batches every id
+    into one figma_execute call rather than one round trip per shape."""
+    if not node_ids:
+        return {}
+    ids_json = json.dumps(node_ids)
+    code = f"""
+    const ids = {ids_json};
+    let updated = 0;
+    for (const id of ids) {{
+      const node = await figma.getNodeByIdAsync(id);
+      if (node) {{
+        if ("cornerRadius" in node) node.cornerRadius = 0;
+        if ("strokes" in node) node.strokes = [];
+        updated++;
+      }}
+    }}
+    return {{ requested: ids.length, updated }};
+    """
+    result = await sess.call_tool("figma_execute", {"code": code})
+    return _unwrap(result)
+
+
+async def set_image_fill(sess: ClientSession, node_id: str, image_bytes: bytes) -> dict[str, Any]:
+    """Fills a node with the given raw image bytes. Confirmed live: this
+    tool's real parameters are nodeIds (an array) and imageData (a base64
+    string) - neither is documented in the tool's own (empty) schema; a
+    guessed nodeId/imageUrl shape fails validation with no useful message
+    until the raw Zod error is inspected directly."""
+    import base64
+
+    result = await sess.call_tool("figma_set_image_fill", {
+        "nodeIds": [node_id],
+        "imageData": base64.b64encode(image_bytes).decode("ascii"),
+    })
+    return _unwrap(result)
+
+
 async def create_section(
     sess: ClientSession, name: str, x: float, y: float, width: float = 1000, height: float = 800,
     fill_color: str | None = None,

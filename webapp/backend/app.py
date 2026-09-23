@@ -17,6 +17,8 @@ from report import build_report
 from figjam.research_agent import FigJamAgentError, analyze_research, ask_question, connect_board
 from figjam.figma_layout import push_layout_to_figjam
 from figjam.figma_mcp_client import FigmaMCPError, request_pairing_code
+from figjam.personas import generate_personas
+from figjam.persona_layout import push_personas_to_figjam
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
@@ -48,7 +50,7 @@ CORS(app, resources={r"/api/*": {"origins": _normalize_origin(os.environ.get("FR
 
 # In-memory, single-session state for the experimental FigJam agent (same
 # pattern as the Pattern Analyzer's module-level state: no DB for this MVP).
-_figjam_state: dict = {"context": None, "analysis": None, "activity": []}
+_figjam_state: dict = {"context": None, "analysis": None, "personas": None, "activity": []}
 
 
 @app.get("/")
@@ -76,11 +78,14 @@ def figjam_page():
 
 @app.get("/api/provider")
 def provider():
+    # Mirrors get_provider()'s own fallback priority exactly (llm_providers.py)
+    # so this display-only endpoint never reports a different provider than
+    # the one actually used for real calls.
     name = os.environ.get("LLM_PROVIDER", "").strip().lower()
     if not name:
-        name = "gemini" if os.environ.get("GEMINI_API_KEY") else (
-            "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else (
-                "openai" if os.environ.get("OPENAI_API_KEY") else "mock"
+        name = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else (
+            "openai" if os.environ.get("OPENAI_API_KEY") else (
+                "groq" if os.environ.get("GROQ_API_KEY") else "mock"
             )
         )
     return jsonify({"provider": name})
@@ -132,6 +137,7 @@ def figjam_connect():
     context = result["context"]
     _figjam_state["context"] = context
     _figjam_state["analysis"] = None
+    _figjam_state["personas"] = None
     _figjam_state["activity"] = result["activity"]
 
     return jsonify({
@@ -153,7 +159,7 @@ def figjam_analyze():
     except FigJamAgentError as exc:
         return jsonify({"error": str(exc)}), 502
     except Exception as exc:  # noqa: BLE001 - surface any unexpected provider error to the UI
-        return jsonify({"error": f"Gemini analysis failed: {exc}"}), 502
+        return jsonify({"error": f"LLM analysis failed: {exc}"}), 502
 
     _figjam_state["analysis"] = result
     _figjam_state["activity"] = _figjam_state["activity"] + result["activity"]
@@ -166,6 +172,53 @@ def figjam_analyze():
         "design_opportunities": result["design_opportunities"],
         "activity": _figjam_state["activity"],
     })
+
+
+@app.post("/api/figjam/generate-personas")
+def figjam_generate_personas():
+    context = _figjam_state.get("context")
+    if context is None:
+        return jsonify({"error": "Connect a FigJam board before generating personas."}), 400
+
+    try:
+        result = generate_personas(context, _figjam_state.get("analysis"))
+    except FigJamAgentError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:  # noqa: BLE001 - surface any unexpected provider error to the UI
+        return jsonify({"error": f"Persona synthesis failed: {exc}"}), 502
+
+    _figjam_state["personas"] = result["personas"]
+    _figjam_state["activity"] = _figjam_state["activity"] + result["activity"]
+
+    return jsonify({
+        "personas": result["personas"],
+        "activity": _figjam_state["activity"],
+        # This call's own steps only, not the cumulative session log above -
+        # the frontend's persona status feed must show what THIS action did,
+        # not whatever unrelated action (e.g. Push to FigJam) happened most
+        # recently in the same session.
+        "step_activity": result["activity"],
+    })
+
+
+@app.post("/api/figjam/push-personas")
+def figjam_push_personas():
+    personas = _figjam_state.get("personas")
+    if not personas:
+        return jsonify({"error": "Generate personas before pushing to FigJam."}), 400
+
+    try:
+        result = asyncio.run(push_personas_to_figjam(personas))
+    except FigmaMCPError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001 - surface any unexpected MCP/subprocess error to the UI
+        return jsonify({"error": f"Push personas to FigJam failed: {exc}"}), 502
+
+    _figjam_state["activity"] = _figjam_state["activity"] + [{"label": a, "at": ""} for a in result["activity"]]
+
+    return jsonify(result)
 
 
 @app.post("/api/figjam/ask")
@@ -184,7 +237,7 @@ def figjam_ask():
     except FigJamAgentError as exc:
         return jsonify({"error": str(exc)}), 502
     except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": f"Gemini failed to answer: {exc}"}), 502
+        return jsonify({"error": f"LLM failed to answer: {exc}"}), 502
 
     return jsonify(result)
 

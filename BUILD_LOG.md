@@ -750,3 +750,370 @@ machine) was verified live.
   (same `LLM_PROVIDER=mock` local-environment limitation as the prior
   commit); only the mock-provider path plus the evidence-verification/
   confidence logic around it was exercised against real board data.
+
+## figmaconnecttry branch — Evidence-backed persona synthesis, pushed directly to FigJam
+
+### What shipped
+- New pipeline stage extending the existing Retrieve -> Normalize ->
+  Analyze -> Critique flow: a Persona Synthesist (`figjam/personas.py`)
+  that clusters the same retrieved-and-verified research items into 2-4
+  evidence-backed personas via a third Gemini call, reusing
+  `research_agent.py`'s `_verify_evidence`/`_evidence_confidence`/
+  `_parse_json` directly rather than reimplementing evidence handling for
+  a third time.
+- Two anti-hallucination checks enforced in code, not trusted from the
+  model:
+  - A persona's `evidence` ids are verified against the real board; one
+    with zero verifiable evidence is dropped entirely (raises
+    `FigJamAgentError`) rather than shown as if it were grounded.
+  - A claimed "verbatim" representative quote is checked against the
+    actual text of its cited evidence item (`_verify_quote()`) and
+    downgraded to "synthesized" if the quoted text doesn't really appear
+    there, regardless of what the model claimed.
+  - Profile fields (age/role/location/digital_behaviour) render as "Not
+    identified in research" whenever the model returns `null`, enforced
+    by `_clean_profile()` only ever trusting a real, non-empty string.
+- New layout module `figjam/persona_layout.py`, extending
+  `figma_layout.py`'s architecture rather than duplicating it: reuses the
+  same `figma_mcp_client.session()` / `create_section()` /
+  `create_stickies()` primitives already proven live for Push to FigJam.
+  One FigJam section per persona = one structured card (header, profile,
+  Goals | Pain points two-column, Behaviours | Needs two-column,
+  Motivations, Quote, Evidence), using the same validated
+  `figjam_create_stickies` color enum as the existing layout. Cards are
+  placed left to right with a fixed gap, not stacked or scattered.
+- Two new endpoints in `app.py`: `POST /api/figjam/generate-personas`
+  (runs synthesis + verification, stores result in `_figjam_state`) and
+  `POST /api/figjam/push-personas` (pushes the stored personas via the new
+  layout module) - mirrors the existing analyze/push-to-figjam route
+  pattern exactly.
+- Webapp UI: a "Generate Personas in FigJam" CTA (`.btn-featured`, same
+  treatment as the pairing/push CTAs from the prior commit), a status feed
+  ("Analyzing... Validating... Pushed to FigJam (checkmark)"), and persona
+  preview cards (name/avatar initials, profile line, two-column
+  goals/pain-points and behaviours/needs, motivations, quote with a
+  "synthesized statement" tag when not verbatim, confidence + evidence
+  chips) reusing the existing card/badge/`confidenceBadge()`/
+  `evidenceChips()` components from the prior grounding commit - no raw
+  JSON, internal ids, or MCP details exposed to the user.
+- Added a mock persona response to `llm_providers.py`'s `MockProvider` (two
+  personas grounded in the existing demo board's `N2`-`N4` and `N11`-`N12`
+  items) so the whole pipeline is exercisable offline, consistent with the
+  rest of the project's mock-provider convention.
+
+### What broke / what changed
+- Nothing broke in existing functionality; this is a pure extension
+  (`_figjam_state["personas"]` is a new key, reset to `None` alongside
+  `analysis` on every new connect, same lifecycle as the existing
+  `analysis` key).
+- Deliberately did not attempt to code-verify free-text profile claims
+  (e.g. that a stated "role" genuinely appears in the source text) beyond
+  requiring a real, non-empty string - general prose faithfulness is
+  prompt-enforced, the same trust level already extended to a theme's
+  "name" or an insight's "statement" text elsewhere in this pipeline. Only
+  the two specific, checkable claims (evidence ids existing, a quote being
+  literally verbatim) are verified in code. Documented this as an explicit
+  design parity decision, not an oversight, in `personas.py`'s docstring.
+
+### Test evidence
+- Added 7 new tests to `test_figjam.py`: persona grouping produces
+  evidence-backed output, evidence traces back to multiple distinct
+  participants, a persona with zero verifiable evidence is dropped,
+  unsupported demographic fields render as omitted/null (including a
+  non-string value and an empty string, both must not pass through),
+  a false "verbatim" claim is downgraded, the layout plan uses only valid
+  sticky colors and positions cards horizontally (not stacked), and an
+  empty persona list produces no cards.
+- `python webapp/backend/test_figjam.py`: 21/21 passing (14 prior + 7
+  new), confirming no regression to Pattern Analysis, FigJam
+  connect/analyze, or Push to FigJam.
+- **Live, end to end, through the real Flask routes** (mock LLM provider,
+  demo board - forced by clearing `FIGMA_ACCESS_TOKEN` for the local
+  process): `POST /api/figjam/connect` -> `/api/figjam/analyze` ->
+  `/api/figjam/generate-personas` returned two personas ("Priya, the Early
+  Arriver" from `N2`/`N3`/`N4`, confidence `strong`, participants
+  `P1`/`P3`/`P4`; "Devraj, the Planner" from `N11`/`N12`, confidence
+  `medium`, participants `P2`/`P4`), matching the demo board's actual
+  content. Manually confirmed with a fake provider that a persona citing
+  an invented evidence id is dropped entirely and a false verbatim quote
+  claim is downgraded, both live through `generate_personas()`, not just
+  in the unit tests.
+- Confirmed `POST /api/figjam/push-personas` fails cleanly (a clear
+  `FigmaMCPError` message, `502`, not a crash) when no
+  `FIGMA_ACCESS_TOKEN`/live Desktop Bridge connection is available in this
+  environment.
+- **Not tested:** the actual write landing on a real, live FigJam board
+  (needs Figma Desktop open with the Desktop Bridge plugin connected,
+  unavailable in this environment) - the MCP call path is identical to the
+  already-proven-live Push to FigJam, but the persona-specific layout
+  itself has not yet been visually confirmed on a real board.
+
+## figmaconnecttry branch — Fixed board pollution in persona/theme analysis, added diagnostic errors
+
+### What shipped
+- User reported "Generate Personas in FigJam" failing with "Could not form
+  any evidence-backed persona" and asked for a full trace before any fix.
+  Traced the failure live end to end (real board, real Gemini at the time)
+  and found the pipeline actually succeeded on that specific run - but
+  surfaced a real, separate bug along the way: the connected board had
+  accumulated 13 leftover sticky notes/sections from earlier "Push to
+  FigJam" test runs (Themes/Insights/Contradictions/etc.), which were
+  being read back and fed to the LLM as if they were primary research,
+  alongside the 6 real participant items.
+- Added `FigJamResearchContext.primary_research_items()`, excluding any
+  item inside (or itself) a section ResearchMate creates when pushing its
+  own output. Wired into both the persona context prompt and the existing
+  theme/insight context prompt and evidence verification (`_valid_ids`),
+  since both were equally exposed.
+- Replaced the generic "Could not form any evidence-backed persona" error
+  with one reporting actual participant/item/candidate counts and the
+  specific failure reason (model proposed nothing vs. proposed personas
+  with no verifiable evidence), per the explicit ask for a diagnosable
+  message. Frontend status feed now shows real counts from the connected
+  board and the backend's actual activity trail instead of placeholder text.
+
+### What broke / what changed
+- Confirmed live that filtering brought the board from 19 items down to
+  the real 6 participant items, and Gemini correctly produced clean,
+  evidence-backed personas grounded only in that real research - the
+  contamination hadn't caused the specific reported failure in this
+  session's testing, but was real and would compound with repeated use.
+
+### Test evidence
+- Added `test_primary_research_items_excludes_researchmates_own_pushed_output`
+  and two tests locking in the new diagnostic error message content.
+  `python webapp/backend/test_figjam.py`: 23/23 passing.
+
+## figmaconnecttry branch — Replaced Gemini with Groq as the LLM provider
+
+### What shipped
+- User requested removing Gemini entirely in favor of Groq (OpenAI-compatible
+  API). Removed `GeminiProvider` and `google-generativeai` completely - no
+  hidden fallback left (a leftover `GEMINI_API_KEY` in the environment now
+  has zero effect, confirmed by test). Added Groq support by reusing the
+  existing `OpenAIProvider` class with Groq's base_url and default model,
+  per the "no duplicated provider logic" design - no new provider class.
+- `OpenAIProvider.complete()` now requests `response_format:
+  {"type": "json_object"}` on every call for more reliable structured
+  output; every system prompt in the project already says "valid JSON
+  object" as required by that mode.
+
+### What broke / what changed
+- The originally-chosen default model (`llama-3.3-70b-versatile`) doesn't
+  exist on this Groq account (`404 model_not_found`, confirmed live).
+  Queried the account's actual `/v1/models` list directly and switched the
+  default to `openai/gpt-oss-120b`, confirmed to support
+  `response_format: json_object`.
+- Found and fixed two real deployment misconfigurations while testing: the
+  local `.env` had the key saved as `GROQ_API` (code reads `GROQ_API_KEY`)
+  with `LLM_PROVIDER` still `mock`; the equivalent Railway backend service
+  variable had the same `LLM_PROVIDER=mock` value silently overriding
+  `GROQ_API_KEY`, traced live via `/api/provider` across several redeploys
+  and a Railway multi-environment mix-up before finding it in the dashboard.
+
+### Test evidence
+- Added 6 tests: Groq selection via explicit `LLM_PROVIDER`, via key
+  presence when unset, custom `GROQ_MODEL` respected, missing
+  `GROQ_API_KEY` raises a clear error, `LLM_PROVIDER=gemini` is rejected as
+  unknown, and a leftover `GEMINI_API_KEY` has no effect.
+- **Live, end to end, against the real connected board and real Groq:**
+  connect (6 participants) → analyze (5 themes/5 insights/1 contradiction,
+  all citing real board ids, confidence "strong") → generate-personas (2
+  evidence-backed personas, verified participant coverage, genuinely
+  verbatim quotes) → push-personas (38 real elements created on the actual
+  board). Regression-checked existing Push to FigJam and the original
+  Pattern Analyzer both still work with Groq. Also confirmed on the live
+  Railway deployment itself (`/api/analyze` returned a real, non-canned
+  pattern from novel input). Full suite: 29/29 passing.
+
+## figmaconnecttry branch — Recover from Groq's json_validate_failed instead of failing
+
+### What shipped
+- User hit this live on the deployed app: `/api/figjam/analyze` against
+  `openai/gpt-oss-120b` returned a 400 with code `json_validate_failed`,
+  even though the error's own `failed_generation` field contained what
+  reads as complete, valid JSON - Groq's internal `json_object`
+  grammar-constrained decoding occasionally rejects output that's actually
+  fine. `OpenAIProvider.complete()` now catches this specific error and
+  returns the `failed_generation` text directly (the caller's existing
+  `_parse_json` validates it independently) instead of failing the whole
+  analyze/persona/ask call.
+
+### What broke / what changed
+- Confirmed live that the openai SDK's `exc.body` is the FLAT error object
+  (code/`failed_generation` at the top level) - only the exception's
+  string representation wraps it in an `{"error": {...}}` shape. An
+  earlier draft of this fix assumed the wrapped shape and would have
+  silently never recovered; caught this before shipping by reproducing a
+  real 400 directly against the Groq API and inspecting `exc.body`.
+
+### Test evidence
+- Added `test_extract_failed_generation_recovers_groq_json_validate_failed`
+  covering the real error shape, an empty `failed_generation` (nothing to
+  recover), an unrelated error code (must not be swallowed), and a non-API
+  exception with no `.body` at all. `python webapp/backend/test_figjam.py`:
+  30/30 passing.
+
+## figmaconnecttry branch — Fixed persona status feed contamination and stale post-reconnect UI
+
+### What shipped
+- User hit this live: after generating personas successfully, "Push
+  Personas to FigJam" failed with "Generate personas before pushing to
+  FigJam," and the status feed above it showed unrelated leftover lines
+  ("Created section 'Design Opportunities'") from an earlier, different
+  Push to FigJam click.
+- Root cause of the status-feed contamination:
+  `/api/figjam/generate-personas` returned the cumulative session-wide
+  activity log (by design, used for the main activity feed), and the
+  frontend sliced its last 4 entries assuming they'd all be from this
+  call. Added a separate `step_activity` field scoped to just this call's
+  own steps; the frontend now reads that instead of slicing the cumulative
+  log.
+- Root cause of the push failure: `/api/figjam/connect` resets
+  `_figjam_state["personas"]`/`["analysis"]` to `None` server-side on every
+  successful reconnect, but the frontend never hid the previously-rendered
+  results/persona cards or push button. Connect now clears the
+  results/personas/ask sections and resets local persona state whenever a
+  new connection succeeds. Also fixed `pushPersonasBtn`'s status list never
+  being cleared between clicks, which let "Creating FigJam layout..."
+  accumulate indefinitely on repeated clicks.
+
+### Test evidence
+- Added a Flask-test-client route-level test
+  (`test_generate_personas_route_step_activity_excludes_unrelated_prior_steps`)
+  locking in that `step_activity` excludes unrelated prior activity while
+  the cumulative `activity` field still carries full session history.
+  `python webapp/backend/test_figjam.py`: 31/31 passing.
+
+## figmaconnecttry branch — Rebuilt FigJam layout: real cards instead of stickies, fixed overlaps
+
+### What shipped
+- User reported (with screenshots) persona cards rendering as sticky
+  notes, overlapping Themes/Insights sections, and Themes/Insights
+  stickies sitting too close together or overlapping - asked for the
+  existing layout system to be inspected before anything was rewritten.
+- Root-caused the sticky overlap by testing the live MCP tools directly:
+  `figjam_create_stickies` always creates a fixed 240x240 sticky
+  regardless of any width/height passed (confirmed live) - the existing
+  constants in `figma_layout.py` assumed 220x140, so rows overlapped by
+  100px and columns by 20px on every board, not just this one. Fixed by
+  measuring the real size (`STICKY_SIZE = 240`) and deriving section
+  width/column spacing from it dynamically.
+- Discovered a second real tool via a live `list_tools()` call:
+  `figjam_create_shape_with_text` - a genuinely custom-sized,
+  custom-colored, labeled shape (confirmed live: width/height/fillColor/
+  shapeType all work, unlike stickies). Personas are now built entirely
+  from this instead of `figjam_create_stickies`: one big background card
+  shape per persona with smaller colored "zone" shapes layered on top,
+  reusing the same 5 pastel tones already established for
+  Themes/Insights/etc.
+- All persona cards live inside one real "User personas" FigJam section,
+  positioned dynamically: `push_personas_to_figjam` reads the live board
+  first and places the section strictly to the right of every existing
+  node's rightmost edge - not just other ResearchMate sections, but the
+  actual P1-P6 research stickies too (confirmed live these sit outside
+  any section and would otherwise go unnoticed by a section-name-only check).
+- Added `figjam/layout_geometry.py`: a small, reusable geometry module
+  (`Rect`, `rects_overlap`, `bounding_box`, `find_overlap`,
+  `assert_no_overlaps`, `grid_positions`) shared by both `figma_layout.py`
+  and `persona_layout.py`, with a pre-push overlap assertion in both so a
+  broken layout fails loudly in code rather than shipping silently.
+
+### What broke / what changed
+- Verified live against the real connected board: the P1-P6 stickies end
+  at x=1740; the new Personas section correctly started at x=1860, exactly
+  1740 + the 120px gap constant.
+
+### Test evidence
+- Added 8 new tests: real sticky size has no overlaps at 8/12/5/6/7 items,
+  `layout_geometry`'s own primitives, persona cards use shapes not
+  stickies, 2-column grid positioning, no-overlap at scale (1-8 personas x
+  varying content), dynamic `start_x` placement, evidence ids present in
+  the card's footer shape, and the broadened existing-content bounding box
+  check. `python webapp/backend/test_figjam.py`: 37/37 passing.
+
+## figmaconnecttry branch — Redesigned persona card visuals: identity sidebar + restrained color
+
+### What shipped
+- User shared 9 reference persona-card screenshots and asked for the
+  card's internal visual design to match that pattern. Refined the card
+  built in the previous commit: a left "identity" sidebar (name,
+  description, profile) in one strong accent color with white text,
+  spanning the card's full height, next to a right-hand content area (a
+  prominent quote, then Goals/Pain points, Behaviours/Needs, Motivations,
+  Evidence) in a single restrained near-white tone - one accent carrying
+  the hierarchy instead of a different pastel per zone.
+- Added `fontSize`/`textColor` to
+  `figma_mcp_client.create_shape_with_text` (confirmed live the API
+  accepts both) so the sidebar can render white text distinct from the
+  neutral zones' smaller, dark-on-light body text.
+
+### What broke / what changed
+- No change to section placement, dynamic positioning, collision
+  detection, or evidence validation - this commit was the card's internal
+  visual design only.
+- Live verification note: the Desktop Bridge cloud-relay pairing dropped
+  repeatedly this session (multiple re-pairs, each lasting under ~15s)
+  before a push could complete against the new design specifically;
+  visual confirmation of this particular redesign was still pending a
+  stable connection at commit time (resolved in the next entry).
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 37/37 passing, including layout
+  stress tests re-run against the new (larger) card dimensions.
+
+## figmaconnecttry branch — Locked persona card to a fixed 1200x660 template, fixed corners/strokes
+
+### What shipped
+- User asked to match a specific reference persona card "same to same,"
+  raising a direct conflict with earlier guidance ("do not add fake
+  profile photos") since the reference has a real photo of a real person.
+  Asked the user directly; they chose to add an actual photo, so sourced
+  one from `randomuser.me` (a service built for placeholder test-user
+  photos) rather than any real, identifiable person's photo repurposed
+  without consent - confirmed live via `figma_set_image_fill` that the
+  fill itself worked (params are `nodeIds` (array) + `imageData` (base64),
+  not documented anywhere in the tool's own schema).
+- User then sent a much larger, fully pixel-specified template spec (exact
+  1200x660 canvas, exact column/section coordinates, locked typography per
+  element) and reversed the photo decision back to "no invented photo" per
+  their own new instruction. Rebuilt the card as a single reusable
+  `PERSONA_TEMPLATE` config dict - fixed canvas, fixed column widths, fixed
+  element positions/sizes, fixed typography - with content truncated to
+  fit rather than the template resizing to fit content. Photo area is now
+  a neutral placeholder box, not a fabricated image.
+- Added `name`/`archetype` fields (personas.py + PERSONA_SYSTEM_PROMPT):
+  the persona's display name must now be a behavioural archetype label
+  ("The Reluctant Host"), never a human or participant name, matching the
+  new template's two-line identity panel.
+
+### What broke / what changed
+- Found two real rendering bugs by testing the live MCP tools directly,
+  not by guessing: `figjam_create_shape_with_text`'s `cornerRadius`
+  parameter is silently ignored (a shape created with `cornerRadius: 0`
+  read back as `80` via a direct `figma_execute` plugin-API call), and
+  every shape carried a visible default stroke that `fillColor` alone
+  didn't remove. Fixed both with `apply_card_finish()`, which forces
+  `cornerRadius = 0` and clears `node.strokes` via `figma_execute` on every
+  shape after creation, batched into one call per push.
+- Discovered `figma_capture_screenshot` (another live MCP tool) partway
+  through and switched from relying on the user's description to reading
+  real screenshots directly - this caught that several text fields
+  (persona name, background body, longer bullets) were being clipped by
+  FigJam's own text rendering below the character limits originally
+  assumed; recalibrated limits empirically against real rendered
+  screenshots (several iterations) until nothing overlapped or overflowed
+  its own box. User confirmed the final result acceptable, noting some
+  ellipsis on the longest content is expected content-fitting, not a bug,
+  per their own explicit "truncate only when necessary" rule.
+
+### Test evidence
+- Added tests confirming card dimensions are byte-for-byte identical
+  regardless of content amount (tiny vs. maximally-long persona), every
+  shape uses `cornerRadius: 0`, and the persona name is rendered as given
+  rather than falling back to a participant id.
+- **Live, end to end, against the real connected board and real Groq,
+  verified via real screenshots captured and read directly (not just
+  described):** confirmed sharp corners, no visible strokes, and that
+  truncated text stays inside its own box rather than bleeding into
+  neighboring zones. `python webapp/backend/test_figjam.py`: 40/40 passing.
