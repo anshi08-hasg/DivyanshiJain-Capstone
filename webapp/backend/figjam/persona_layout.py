@@ -8,12 +8,13 @@ requirement - a sticky note is a fixed 240x240 square (confirmed live,
 width/height params are silently ignored), which can't hold a structured
 multi-zone card layout at all.
 
-Persona card = one big background shape (persona name + description) with
-smaller, distinctly-colored "zone" shapes layered on top for Profile,
-Goals, Pain points, Behaviours, Needs, Motivations, Quote, and Evidence -
-reusing the exact same 5 pastel tones already established in
-figma_layout.py's _SECTION_FILL_HEX, for one consistent palette across the
-whole board rather than a second, disconnected color scheme.
+Persona card = a left "identity" sidebar (name, description, profile - dark
+accent fill, white text) spanning the card's full height, next to a
+right-hand main content area (Quote, Goals, Pain points, Behaviours, Needs,
+Motivations, Evidence) in restrained near-white zones - the one strong
+accent color carries the hierarchy instead of a different pastel per zone,
+matching professional persona-card references (identity panel + neutral
+content) rather than a rainbow of category colors.
 
 All cards live inside one real FigJam section titled "User personas",
 positioned dynamically clear of EVERY node already on the connected board -
@@ -35,36 +36,40 @@ _NOT_IDENTIFIED = "Not identified in research"
 # for (2 personas side by side, 3 as 2+1, 4 as 2x2) rather than a
 # width-adaptive column count - simpler, predictable, and matches every
 # example given.
-CARD_WIDTH = 460
+CARD_WIDTH = 680
+SIDEBAR_WIDTH = 220
 CARD_PADDING = 24
 COLUMN_GAP = 20
-COLUMN_WIDTH = (CARD_WIDTH - CARD_PADDING * 2 - COLUMN_GAP) // 2
+MAIN_AREA_WIDTH = CARD_WIDTH - CARD_PADDING * 2 - COLUMN_GAP - SIDEBAR_WIDTH
+COLUMN_WIDTH = (MAIN_AREA_WIDTH - COLUMN_GAP) // 2
 ROW_GAP = 16
 CARDS_PER_ROW = 2
 CARD_GAP_X = 60
 CARD_GAP_Y = 60
 SECTION_PADDING = 48
-SECTION_GAP = 120  # clearance kept between the existing synthesis content and the new Personas section
+SECTION_GAP = 120  # clearance kept between existing board content and the new Personas section
 
 _LINE_HEIGHT = 20
 _ZONE_LABEL_HEIGHT = 24
 _ZONE_PADDING = 16
 _MIN_ZONE_HEIGHT = 80
-_HEADER_HEIGHT = 110
-_PROFILE_HEIGHT = 130
 _QUOTE_HEIGHT = 110
 _EVIDENCE_HEIGHT = 60
 
-_HEADER_COLOR = "#EAF3EC"
-_PROFILE_COLOR = "#F1F1F3"
-_GOALS_COLOR = "#E6F4EA"
-_PAIN_POINTS_COLOR = "#FCE8E6"
-_BEHAVIOURS_COLOR = "#E6F0FA"
-_NEEDS_COLOR = "#F1E6FA"
-_MOTIVATIONS_COLOR = "#FFF3E0"
-_QUOTE_COLOR = "#FFF9DB"
+# One strong accent (the sidebar) carries the hierarchy; every content zone
+# stays a near-neutral off-white so the card reads as "restrained UX board",
+# not "a different pastel per category" - reusing the product's own accent
+# green (style.css's --accent/--accent-strong) rather than inventing a new
+# persona-only color scheme.
+_SIDEBAR_COLOR = "#1F6F4A"
+_SIDEBAR_TEXT_COLOR = "#FFFFFF"
+_ZONE_COLOR = "#FAFAFA"
 _EVIDENCE_COLOR = "#F1F1F3"
 _CARD_BACKGROUND_COLOR = "#FFFFFF"
+
+_SIDEBAR_FONT_SIZE = 13
+_ZONE_FONT_SIZE = 12
+_QUOTE_FONT_SIZE = 13
 
 _PERSONAS_SECTION_TITLE = "User personas"
 
@@ -78,30 +83,48 @@ def _zone_text(label: str, lines: list[str]) -> str:
     return f"{label.upper()}\n{body}"
 
 
-def _profile_text(profile: dict[str, Any]) -> str:
+def _sidebar_text(persona: dict[str, Any]) -> str:
+    profile = persona.get("profile") or {}
     lines = [
+        persona.get("name", "Unnamed persona"),
+        "",
+        persona.get("short_description", ""),
+        "",
         f"Role: {profile.get('role') or _NOT_IDENTIFIED}",
         f"Age: {profile.get('age') or _NOT_IDENTIFIED}",
         f"Location: {profile.get('location') or _NOT_IDENTIFIED}",
         f"Digital behaviour: {profile.get('digital_behaviour') or _NOT_IDENTIFIED}",
     ]
-    return "PROFILE\n" + "\n".join(lines)
+    return "\n".join(lines)
+
+
+def _sidebar_line_count(persona: dict[str, Any]) -> int:
+    # name + blank + description + blank + 4 profile lines = 8, plus extra
+    # lines if the description wraps beyond the width estimate below.
+    description = persona.get("short_description", "")
+    wrapped_lines = max(1, -(-len(description) // 28))  # ~28 chars/line at this width/font size
+    return 4 + wrapped_lines + 4
 
 
 def _quote_text(quote: dict[str, Any]) -> str:
     text = (quote or {}).get("text", "").strip()
     if not text:
-        return "REPRESENTATIVE QUOTE\nNo representative quote identified in research."
+        return "“ No representative quote identified in research. ”"
     if quote.get("is_verbatim"):
-        return f'REPRESENTATIVE QUOTE\n"{text}"\n— {quote.get("source_id", "")}'
-    return f'REPRESENTATIVE QUOTE\n"{text}"\n(synthesized statement, not a direct quote)'
+        return f'“ {text} ”\n— {quote.get("source_id", "")}'
+    return f'“ {text} ”\n(synthesized statement, not a direct quote)'
 
 
 def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     """Returns {"x", "y", "width", "height", "shapes": [...]}. `shapes` is
     ordered background-first so later (foreground) shapes are created after
     it - FigJam stacks newly-created nodes above existing ones, so creation
-    order doubles as z-order here."""
+    order doubles as z-order here.
+
+    Layout: a left "identity" sidebar (name, description, profile - one
+    strong accent color, white text) spans the card's full height next to a
+    right-hand main content area (Quote, Goals/Pain points, Behaviours/Needs,
+    Motivations, Evidence) in restrained near-white zones."""
     goals = persona.get("goals") or []
     pain_points = persona.get("pain_points") or []
     behaviours = persona.get("behaviours") or []
@@ -112,72 +135,73 @@ def _build_card(persona: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     row2_height = max(_zone_height(len(behaviours) or 1), _zone_height(len(needs) or 1))
     motivations_height = _zone_height(len(motivations) or 1)
 
-    card_height = (
-        CARD_PADDING * 2 + _HEADER_HEIGHT + ROW_GAP + _PROFILE_HEIGHT + ROW_GAP
-        + row1_height + ROW_GAP + row2_height + ROW_GAP
-        + motivations_height + ROW_GAP + _QUOTE_HEIGHT + ROW_GAP + _EVIDENCE_HEIGHT
+    main_content_height = (
+        _QUOTE_HEIGHT + ROW_GAP + row1_height + ROW_GAP + row2_height + ROW_GAP
+        + motivations_height + ROW_GAP + _EVIDENCE_HEIGHT
     )
+    sidebar_height = max(main_content_height, _ZONE_PADDING * 2 + _sidebar_line_count(persona) * _LINE_HEIGHT)
+    card_height = CARD_PADDING * 2 + max(main_content_height, sidebar_height)
 
     shapes = [{
-        "text": f"{persona.get('name', 'Unnamed persona')}\n\n{persona.get('short_description', '')}",
-        "x": x, "y": y, "width": CARD_WIDTH, "height": card_height,
+        "text": "", "x": x, "y": y, "width": CARD_WIDTH, "height": card_height,
         "shapeType": "ROUNDED_RECTANGLE", "fillColor": _CARD_BACKGROUND_COLOR,
     }]
 
-    cursor_y = y + CARD_PADDING + _HEADER_HEIGHT + ROW_GAP
     left_x = x + CARD_PADDING
-    right_x = left_x + COLUMN_WIDTH + COLUMN_GAP
+    right_x = left_x + SIDEBAR_WIDTH + COLUMN_GAP
+    right_col_x = right_x + COLUMN_WIDTH + COLUMN_GAP
 
     shapes.append({
-        "text": _profile_text(persona.get("profile") or {}),
-        "x": left_x, "y": cursor_y, "width": CARD_WIDTH - CARD_PADDING * 2, "height": _PROFILE_HEIGHT,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _PROFILE_COLOR,
+        "text": _sidebar_text(persona), "x": left_x, "y": y + CARD_PADDING,
+        "width": SIDEBAR_WIDTH, "height": card_height - CARD_PADDING * 2,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _SIDEBAR_COLOR,
+        "textColor": _SIDEBAR_TEXT_COLOR, "fontSize": _SIDEBAR_FONT_SIZE,
     })
-    cursor_y += _PROFILE_HEIGHT + ROW_GAP
+
+    cursor_y = y + CARD_PADDING
+    shapes.append({
+        "text": _quote_text(persona.get("representative_quote") or {}),
+        "x": right_x, "y": cursor_y, "width": MAIN_AREA_WIDTH, "height": _QUOTE_HEIGHT,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _QUOTE_FONT_SIZE,
+    })
+    cursor_y += _QUOTE_HEIGHT + ROW_GAP
 
     shapes.append({
-        "text": _zone_text("Goals", goals), "x": left_x, "y": cursor_y,
+        "text": _zone_text("Goals", goals), "x": right_x, "y": cursor_y,
         "width": COLUMN_WIDTH, "height": row1_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _GOALS_COLOR,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
     })
     shapes.append({
-        "text": _zone_text("Pain points", pain_points), "x": right_x, "y": cursor_y,
+        "text": _zone_text("Pain points", pain_points), "x": right_col_x, "y": cursor_y,
         "width": COLUMN_WIDTH, "height": row1_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _PAIN_POINTS_COLOR,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
     })
     cursor_y += row1_height + ROW_GAP
 
     shapes.append({
-        "text": _zone_text("Behaviours", behaviours), "x": left_x, "y": cursor_y,
+        "text": _zone_text("Behaviours", behaviours), "x": right_x, "y": cursor_y,
         "width": COLUMN_WIDTH, "height": row2_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _BEHAVIOURS_COLOR,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
     })
     shapes.append({
-        "text": _zone_text("Needs", needs), "x": right_x, "y": cursor_y,
+        "text": _zone_text("Needs", needs), "x": right_col_x, "y": cursor_y,
         "width": COLUMN_WIDTH, "height": row2_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _NEEDS_COLOR,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
     })
     cursor_y += row2_height + ROW_GAP
 
     shapes.append({
-        "text": _zone_text("Motivations", motivations), "x": left_x, "y": cursor_y,
-        "width": CARD_WIDTH - CARD_PADDING * 2, "height": motivations_height,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _MOTIVATIONS_COLOR,
+        "text": _zone_text("Motivations", motivations), "x": right_x, "y": cursor_y,
+        "width": MAIN_AREA_WIDTH, "height": motivations_height,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _ZONE_COLOR, "fontSize": _ZONE_FONT_SIZE,
     })
     cursor_y += motivations_height + ROW_GAP
-
-    shapes.append({
-        "text": _quote_text(persona.get("representative_quote") or {}), "x": left_x, "y": cursor_y,
-        "width": CARD_WIDTH - CARD_PADDING * 2, "height": _QUOTE_HEIGHT,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _QUOTE_COLOR,
-    })
-    cursor_y += _QUOTE_HEIGHT + ROW_GAP
 
     evidence = persona.get("evidence") or []
     shapes.append({
         "text": "RESEARCH EVIDENCE\n" + (", ".join(evidence) if evidence else "none"),
-        "x": left_x, "y": cursor_y, "width": CARD_WIDTH - CARD_PADDING * 2, "height": _EVIDENCE_HEIGHT,
-        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _EVIDENCE_COLOR,
+        "x": right_x, "y": cursor_y, "width": MAIN_AREA_WIDTH, "height": _EVIDENCE_HEIGHT,
+        "shapeType": "ROUNDED_RECTANGLE", "fillColor": _EVIDENCE_COLOR, "fontSize": _ZONE_FONT_SIZE,
     })
 
     return {"x": x, "y": y, "width": CARD_WIDTH, "height": card_height, "shapes": shapes}

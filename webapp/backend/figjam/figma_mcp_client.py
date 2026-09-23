@@ -238,6 +238,7 @@ async def create_stickies(sess: ClientSession, stickies: list[dict[str, Any]]) -
 async def create_shape_with_text(
     sess: ClientSession, text: str, x: float, y: float, width: float, height: float,
     shapeType: str = "ROUNDED_RECTANGLE", fillColor: str | None = None,
+    textColor: str | None = None, fontSize: float | None = None,
 ) -> dict[str, Any]:
     """A real, editable shape with embedded text - unlike figjam_create_stickies
     (a fixed 240x240 sticky note, confirmed live width/height are ignored),
@@ -246,12 +247,16 @@ async def create_shape_with_text(
     layout. shapeType options confirmed live: ROUNDED_RECTANGLE (default),
     DIAMOND, ELLIPSE, TRIANGLE_UP, TRIANGLE_DOWN, PARALLELOGRAM_RIGHT,
     PARALLELOGRAM_LEFT, ENG_DATABASE, ENG_QUEUE, ENG_FILE, ENG_FOLDER.
-    fillColor, if given, must be a "#RRGGBB" hex string."""
+    fillColor/textColor, if given, must be "#RRGGBB" hex strings."""
     args: dict[str, Any] = {
         "text": text, "x": x, "y": y, "width": width, "height": height, "shapeType": shapeType,
     }
     if fillColor:
         args["fillColor"] = fillColor
+    if textColor:
+        args["textColor"] = textColor
+    if fontSize:
+        args["fontSize"] = fontSize
     result = await sess.call_tool("figjam_create_shape_with_text", args)
     return _unwrap(result)
 
