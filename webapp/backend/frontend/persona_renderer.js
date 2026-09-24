@@ -119,9 +119,17 @@ function buildPersonaSections(persona) {
       `${participants.length ? ` from ${participants.length} participant${participants.length === 1 ? "" : "s"}` : ""}.`
     : "No representative statement identified in research.";
 
+  // A short, human line establishing the persona is research-backed -
+  // never the raw evidence ids/confidence label themselves, which belong
+  // in the app's "View Research Evidence" panel, not a presentation-ready
+  // export.
+  const provenanceText = participants.length > 0
+    ? `Research-backed · Based on ${participants.length} participant${participants.length === 1 ? "" : "s"}`
+    : (evidenceIds.length > 0 ? "Research-backed" : null);
+
   return {
     quoteText, isVerbatim: !!quote.is_verbatim, background, fallbackLead,
-    evidenceIds, participants, confidence: persona.confidence, evidenceCount, categories,
+    evidenceIds, participants, confidence: persona.confidence, evidenceCount, categories, provenanceText,
   };
 }
 
@@ -177,15 +185,17 @@ function computeLayout(ctx, sections, tier) {
     cursorY += headingHeight + 10 + rowHeight + tier.blockGap;
   }
 
+  // Deliberately no raw evidence ids, participant id lists, or confidence
+  // labels in the exported image - those are research-traceability detail
+  // (available in the app's "View Research Evidence" panel), not part of
+  // a clean, presentation-ready persona. Only a short, human provenance
+  // line survives here, and only when the pipeline actually attached real
+  // evidence to this persona - never invented.
   cursorY += 4;
-  const footerLines = [];
-  if (sections.participants.length) footerLines.push(`PARTICIPANTS   ${sections.participants.join(" · ")}`);
-  if (sections.evidenceIds.length) footerLines.push(`RESEARCH EVIDENCE   ${sections.evidenceIds.join(" · ")}`);
-  if (sections.confidence) {
-    footerLines.push(`CONFIDENCE: ${sections.confidence.toUpperCase()} (${sections.evidenceCount} item${sections.evidenceCount === 1 ? "" : "s"})`);
+  if (sections.provenanceText) {
+    items.push({ type: "provenance", text: sections.provenanceText, y: cursorY, fontSize: 13 });
+    cursorY += 13 * 1.4;
   }
-  footerLines.forEach((text, i) => items.push({ type: "footer", text, y: cursorY + i * 20, fontSize: 13 }));
-  cursorY += footerLines.length * 20;
 
   return { items, totalHeight: cursorY + PERSONA_BOTTOM_PADDING };
 }
@@ -241,8 +251,8 @@ function drawLayout(ctx, layout) {
           cy += lines.length * item.fontSize * item.lineHeight + item.itemGap;
         });
       });
-    } else if (item.type === "footer") {
-      ctx.font = `600 ${item.fontSize}px ${PERSONA_FONT_FAMILY}`;
+    } else if (item.type === "provenance") {
+      ctx.font = `400 ${item.fontSize}px ${PERSONA_FONT_FAMILY}`;
       ctx.fillStyle = PERSONA_MUTED;
       ctx.fillText(item.text, x0, item.y + item.fontSize);
     }

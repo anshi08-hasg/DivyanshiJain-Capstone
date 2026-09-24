@@ -412,6 +412,19 @@ function personaList(items, emptyText) {
   return list.map((i) => `<li>${escapeHtml(i)}</li>`).join("");
 }
 
+// A short, human line that establishes the persona is research-backed
+// without exposing raw evidence ids/participant counts as the headline -
+// those live one click away in the "View Research Evidence" panel, using
+// the same real evidence/confidence data, never a re-derived or invented
+// summary of it.
+function personaProvenanceLine(persona) {
+  const participantCount = (persona.participant_coverage || []).length;
+  if (participantCount > 0) {
+    return `Research-backed · Based on ${participantCount} participant${participantCount === 1 ? "" : "s"}`;
+  }
+  return (persona.evidence || []).length > 0 ? "Research-backed" : "Evidence pending review";
+}
+
 function renderPersonaCard(persona) {
   const card = document.createElement("div");
   card.className = "persona-card";
@@ -446,8 +459,35 @@ function renderPersonaCard(persona) {
     </div>
     <div class="persona-block"><h5>Motivations</h5><ul>${personaList(persona.motivations, "Not identified in research")}</ul></div>
     <div class="persona-quote">${quoteHtml}</div>
-    <div class="meta">${confidenceBadge(persona)}${evidenceChips(persona.evidence)}</div>
+    <div class="persona-provenance">
+      <span class="provenance-line">${escapeHtml(personaProvenanceLine(persona))}</span>
+      <button type="button" class="evidence-toggle" aria-expanded="false">View Research Evidence</button>
+    </div>
+    <div class="persona-evidence-panel" hidden>
+      <div class="evidence-panel-row">
+        <span class="evidence-panel-label">Evidence strength</span>
+        ${confidenceBadge(persona)}
+      </div>
+      <div class="evidence-panel-row">
+        <span class="evidence-panel-label">Supporting participants</span>
+        <span>${escapeHtml((persona.participant_coverage || []).join(", ") || "Not identified in research")}</span>
+      </div>
+      <div class="evidence-panel-row">
+        <span class="evidence-panel-label">Evidence</span>
+        <span class="evidence-chip-list">${evidenceChips(persona.evidence)}</span>
+      </div>
+    </div>
   `;
+
+  const evidenceToggle = card.querySelector(".evidence-toggle");
+  const evidencePanel = card.querySelector(".persona-evidence-panel");
+  evidenceToggle.addEventListener("click", () => {
+    const expanded = evidenceToggle.getAttribute("aria-expanded") === "true";
+    evidenceToggle.setAttribute("aria-expanded", String(!expanded));
+    evidenceToggle.textContent = expanded ? "View Research Evidence" : "Hide Research Evidence";
+    evidencePanel.hidden = expanded;
+  });
+
   return card;
 }
 

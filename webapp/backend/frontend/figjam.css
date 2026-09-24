@@ -156,6 +156,72 @@
   color: var(--ink-300);
 }
 
+/* Layer 2 ("why do we believe this?") - deliberately quiet so the persona
+   itself (layer 1) stays the visual focus; evidence detail is one click
+   away, not competing with the persona's own content. */
+.persona-provenance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.provenance-line {
+  font-size: 0.78rem;
+  color: var(--ink-500);
+}
+
+.evidence-toggle {
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  flex-shrink: 0;
+}
+
+.evidence-toggle:hover { color: var(--ink-900); }
+
+.persona-evidence-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+}
+
+.persona-evidence-panel[hidden] { display: none; }
+
+.evidence-panel-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.evidence-panel-label {
+  font-weight: 700;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-500);
+  flex-shrink: 0;
+}
+
+.evidence-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .persona-previews-head {
   margin-top: 28px;
   padding-top: 24px;
