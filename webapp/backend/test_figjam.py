@@ -10,8 +10,11 @@ import sys
 
 from figjam.adapter import MCPFigJamAdapter, _map_board_data_to_raw_items
 from figjam.normalize import normalize_board
-from figjam.research_agent import FigJamAgentError, _parse_json, _verify_evidence, _evidence_confidence, connect_board
-from figjam.figma_layout import build_layout_plan
+from figjam.research_agent import (
+    FigJamAgentError, _parse_json, _verify_evidence, _evidence_confidence, connect_board,
+    analyze_research, set_insight_review, _is_accepted, _effective_statement,
+)
+from figjam.figma_layout import build_layout_plan, _filtered_analysis_for_push
 from figjam import personas as personas_module
 from figjam.personas import generate_personas
 from figjam.persona_layout import build_persona_layout_plan, _validate_layout, _build_card as _build_card_for_test
@@ -290,8 +293,10 @@ class _FakePersonaProvider:
     def __init__(self, response: dict):
         import json
         self._raw = json.dumps(response)
+        self.last_user_prompt = None
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
+        self.last_user_prompt = user_prompt
         return self._raw
 
 
@@ -303,6 +308,236 @@ _PERSONA_TEST_BOARD = {
         {"id": "N3", "type": "sticky", "content": "P4: studies in dorm because library is loud", "metadata": {"participant": "P4"}},
     ],
 }
+
+
+def _make_test_analysis(insight_overrides=None):
+    """A minimal analysis dict shaped like analyze_research()'s real output -
+    just enough for the researcher-review tests below, without needing a
+    live LLM call for every one of them."""
+    insight = {
+        "id": "INS1", "statement": "Original insight statement.",
+        "evidence": ["N1", "N2"], "unsupported": False,
+        "confidence": "medium", "participant_coverage": ["P1", "P3"], "evidence_count": 2,
+        "verdict": "validated", "verdict_note": "ok",
+        "status": "pending", "edited_statement": None,
+    }
+    insight.update(insight_overrides or {})
+    return {
+        "themes": [{"id": "TH1", "name": "Test theme", "evidence": ["N1"]}],
+        "insights": [insight],
+        "contradictions": [], "research_gaps": [], "design_opportunities": [], "activity": [],
+    }
+
+
+def test_insight_review_approve_keeps_original_text_and_is_accepted():
+    analysis = _make_test_analysis()
+    updated = set_insight_review(analysis, "INS1", "approved")
+    assert updated["status"] == "approved"
+    assert updated["statement"] == "Original insight statement."
+    assert _is_accepted(updated)
+    assert _effective_statement(updated) == "Original insight statement."
+
+
+def test_insight_review_edit_preserves_original_and_evidence_ids():
+    analysis = _make_test_analysis()
+    updated = set_insight_review(analysis, "INS1", "edited", "A researcher-rewritten version.")
+    assert updated["status"] == "edited"
+    assert updated["statement"] == "Original insight statement.", "the original must never be overwritten"
+    assert updated["edited_statement"] == "A researcher-rewritten version."
+    assert _effective_statement(updated) == "A researcher-rewritten version."
+    assert updated["evidence"] == ["N1", "N2"], "editing the text must never alter its evidence ids"
+    assert _is_accepted(updated)
+
+
+def test_insight_review_reject_and_challenge_are_preserved_but_not_accepted():
+    for status in ("rejected", "challenged"):
+        analysis = _make_test_analysis()
+        updated = set_insight_review(analysis, "INS1", status)
+        assert updated["status"] == status
+        assert not _is_accepted(updated)
+        assert analysis["insights"][0]["id"] == "INS1", "a reviewed insight must stay in the record, never be deleted"
+
+
+def test_insight_review_rejects_unknown_status():
+    analysis = _make_test_analysis()
+    try:
+        set_insight_review(analysis, "INS1", "bogus")
+        assert False, "must reject an unknown status"
+    except ValueError:
+        pass
+
+
+def test_insight_review_rejects_empty_edit_text():
+    analysis = _make_test_analysis()
+    try:
+        set_insight_review(analysis, "INS1", "edited", "   ")
+        assert False, "must reject empty/whitespace-only edited text"
+    except ValueError:
+        pass
+
+
+def test_insight_review_unknown_insight_id_raises():
+    analysis = _make_test_analysis()
+    try:
+        set_insight_review(analysis, "NOPE", "approved")
+        assert False, "must raise for an insight id that doesn't exist in this analysis"
+    except ValueError:
+        pass
+
+
+class _FakeAnalyzeProvider:
+    """Returns the Pattern Finder's canned findings on the first complete()
+    call, then the Research Critic's canned verdicts on the second -
+    analyze_research() always calls the LLM exactly twice, in that order."""
+
+    def __init__(self, findings: dict, critique: dict):
+        import json
+        self._responses = [json.dumps(findings), json.dumps(critique)]
+        self._call = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        response = self._responses[self._call]
+        self._call += 1
+        return response
+
+
+def test_analyze_research_initializes_insight_review_status(monkeypatch):
+    # Confirms the new review-status fields don't disturb the existing
+    # evidence verification / confidence computation / Research Critic pass -
+    # all three still run exactly as before, status is purely additive.
+    import figjam.research_agent as research_agent_module
+
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    fake_provider = _FakeAnalyzeProvider(
+        findings={
+            "themes": [],
+            "insights": [{"id": "INS1", "statement": "A recurring finding.", "evidence": ["N1", "N2", "N3"]}],
+            "contradictions": [], "research_gaps": [], "design_opportunities": [],
+        },
+        critique={"verdicts": [{"insight_id": "INS1", "verdict": "validated", "note": "well supported"}]},
+    )
+    monkeypatch.setattr(research_agent_module, "get_provider", lambda: fake_provider)
+
+    result = analyze_research(context)
+    insight = result["insights"][0]
+    assert insight["status"] == "pending", "a freshly-analyzed insight must start unreviewed"
+    assert insight["edited_statement"] is None
+    assert insight["evidence"] == ["N1", "N2", "N3"], "evidence verification must still run"
+    assert insight["confidence"] == "strong", "confidence calculation must still run (3 items, 3 participants)"
+    assert insight["verdict"] == "validated", "the Research Critic pass must still run"
+
+
+def test_persona_generation_uses_only_approved_and_edited_insights(monkeypatch):
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    analysis = {
+        "themes": [],
+        "insights": [
+            {"id": "INS1", "statement": "Approved insight text unique-marker-A", "status": "approved", "edited_statement": None},
+            {"id": "INS2", "statement": "Original for edited unique-marker-B", "status": "edited", "edited_statement": "Edited replacement unique-marker-C"},
+            {"id": "INS3", "statement": "Rejected insight text unique-marker-D", "status": "rejected", "edited_statement": None},
+            {"id": "INS4", "statement": "Challenged insight text unique-marker-E", "status": "challenged", "edited_statement": None},
+            {"id": "INS5", "statement": "Pending insight text unique-marker-F", "status": "pending", "edited_statement": None},
+        ],
+        "contradictions": [], "research_gaps": [], "design_opportunities": [],
+    }
+
+    fake_provider = _FakePersonaProvider({
+        "personas": [{
+            "id": "PERSONA1", "name": "Test Persona", "short_description": "grounded",
+            "profile": {}, "goals": [], "behaviours": [], "pain_points": [], "needs": [], "motivations": [],
+            "representative_quote": {"text": "", "is_verbatim": False, "source_id": None},
+            "evidence": ["N1"],
+        }],
+    })
+    monkeypatch.setattr(personas_module, "get_provider", lambda: fake_provider)
+
+    generate_personas(context, analysis)
+
+    prompt = fake_provider.last_user_prompt
+    assert "unique-marker-A" in prompt, "an approved insight must be included"
+    assert "unique-marker-C" in prompt, "an edited insight must contribute its EDITED text"
+    assert "unique-marker-B" not in prompt, "the pre-edit original text must not leak into the prompt"
+    assert "unique-marker-D" not in prompt, "a rejected insight must be excluded"
+    assert "unique-marker-E" not in prompt, "a challenged insight must be excluded"
+    assert "unique-marker-F" not in prompt, "a pending (never-reviewed) insight must be excluded by default"
+
+
+def test_push_to_figjam_filters_out_rejected_and_challenged_insights():
+    analysis = {
+        "themes": [],
+        "insights": [
+            {"id": "INS1", "statement": "Approved marker-A", "status": "approved", "edited_statement": None, "evidence": ["N1"]},
+            {"id": "INS2", "statement": "Original marker-B", "status": "edited", "edited_statement": "Edited marker-C", "evidence": ["N2"]},
+            {"id": "INS3", "statement": "Rejected marker-D", "status": "rejected", "edited_statement": None, "evidence": ["N3"]},
+            {"id": "INS4", "statement": "Challenged marker-E", "status": "challenged", "edited_statement": None, "evidence": ["N4"]},
+        ],
+        "contradictions": [], "research_gaps": [], "design_opportunities": [],
+    }
+
+    filtered = _filtered_analysis_for_push(analysis)
+    ids = [i["id"] for i in filtered["insights"]]
+    assert ids == ["INS1", "INS2"], "only approved/edited insights should be pushed"
+
+    edited_entry = next(i for i in filtered["insights"] if i["id"] == "INS2")
+    assert edited_entry["statement"] == "Edited marker-C", "an edited insight must push its edited text, not the original"
+
+    plan = build_layout_plan(filtered)
+    insights_section = next(s for s in plan if s["key"] == "insights")
+    combined_text = " ".join(insights_section["items"])
+    assert "marker-A" in combined_text
+    assert "marker-C" in combined_text
+    assert "marker-B" not in combined_text, "the pre-edit original text must not appear on the board"
+    assert "marker-D" not in combined_text, "a rejected insight must never be pushed"
+    assert "marker-E" not in combined_text, "a challenged insight must never be pushed"
+
+
+def test_review_endpoint_persists_and_state_endpoint_rehydrates_it():
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    app_module._figjam_state["context"] = context
+    app_module._figjam_state["analysis"] = _make_test_analysis({"statement": "Original text", "status": "pending"})
+    app_module._figjam_state["personas"] = None
+    app_module._figjam_state["is_demo"] = True
+
+    client = app_module.app.test_client()
+
+    res = client.post("/api/figjam/insights/INS1/review", json={"status": "edited", "edited_text": "Researcher-edited text"})
+    assert res.status_code == 200
+    assert res.get_json()["insight"]["status"] == "edited"
+
+    # A brand new request here stands in for a full page reload - this must
+    # reflect the SAME server-side state, not anything a frontend JS object
+    # remembers, since that's exactly what a real reload throws away.
+    state_res = client.get("/api/figjam/state")
+    data = state_res.get_json()
+    assert data["connected"] is True
+    insight = data["analysis"]["insights"][0]
+    assert insight["status"] == "edited"
+    assert insight["edited_statement"] == "Researcher-edited text"
+    assert insight["statement"] == "Original text", "the original must survive an edit, for traceability"
+    assert insight["evidence"] == ["N1", "N2"], "evidence ids must never change from a review action"
+
+    app_module._figjam_state["context"] = None
+    app_module._figjam_state["analysis"] = None
+
+
+def test_review_endpoint_rejects_unknown_status_over_http():
+    context = normalize_board(_PERSONA_TEST_BOARD)
+    app_module._figjam_state["context"] = context
+    app_module._figjam_state["analysis"] = _make_test_analysis()
+
+    client = app_module.app.test_client()
+    res = client.post("/api/figjam/insights/INS1/review", json={"status": "bogus"})
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+    app_module._figjam_state["context"] = None
+    app_module._figjam_state["analysis"] = None
+
+
+def test_state_endpoint_reports_not_connected_when_nothing_connected():
+    app_module._figjam_state["context"] = None
+    res = app_module.app.test_client().get("/api/figjam/state")
+    assert res.get_json() == {"connected": False}
 
 
 def test_persona_grouping_produces_evidence_backed_personas(monkeypatch):

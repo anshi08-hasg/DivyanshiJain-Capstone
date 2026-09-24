@@ -482,9 +482,22 @@ body {
   color: white;
 }
 
-.card.decision-approve { border-color: var(--accent); background: var(--accent-soft); }
-.card.decision-reject { opacity: 0.5; }
-.card.decision-edit { border-color: #d8a300; background: #fffaf0; }
+.card.decision-approved { border-color: var(--accent); background: var(--accent-soft); }
+.card.decision-rejected { opacity: 0.5; }
+.card.decision-edited { border-color: #d8a300; background: #fffaf0; }
+.card.decision-challenged { border-color: #c15b1a; background: #fdeee0; }
+
+.status-badge.status-approved { background: var(--accent-soft); color: var(--accent-strong); }
+.status-badge.status-edited { background: #fff7e0; color: #8a6300; }
+.status-badge.status-challenged { background: #fdeee0; color: #a04a12; }
+.status-badge.status-rejected { background: var(--danger-soft); color: var(--danger); }
+
+.edited-note {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: var(--ink-500);
+  margin: 6px 0;
+}
 
 .edit-field {
   width: 100%;

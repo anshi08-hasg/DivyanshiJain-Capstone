@@ -58,6 +58,50 @@ function renderActivity(activity) {
   ).join("");
 }
 
+// Shared by the "Connect / Select FigJam" click handler and the page-load
+// rehydration path below (init()) - a successful connect (or a rehydrated
+// prior connection) resets analysis/personas display state, since any
+// results already on screen from a different connection are now stale.
+function applyConnectResult(data) {
+  resultsSection.hidden = true;
+  personasSection.hidden = true;
+  askSection.hidden = true;
+  personasList.innerHTML = "";
+  personasStatusList.innerHTML = "";
+  personasStatusList.hidden = true;
+  pushPersonasBar.hidden = true;
+  personaPreviewsSection.hidden = true;
+  personaPreviewsList.innerHTML = "";
+  personaPreviewsError.hidden = true;
+  state.personas = [];
+
+  overviewGrid.innerHTML = [
+    ["Board", data.overview.board_name],
+    ["Research items", data.overview.research_items],
+    ["Sections", data.overview.sections],
+    ["Participants", data.overview.participants ?? "n/a"],
+  ].map(([label, value]) =>
+    `<div class="overview-tile"><div class="value">${escapeHtml(String(value))}</div><div class="label">${escapeHtml(label)}</div></div>`
+  ).join("");
+
+  overviewSection.hidden = false;
+  activitySection.hidden = false;
+  renderActivity(data.activity);
+
+  state.items = {};
+  (data.items || []).forEach((item) => { state.items[item.id] = item; });
+  renderDebugPanel(data.items || []);
+
+  const statusPill = document.getElementById("board-status-pill");
+  const statusLabel = document.getElementById("board-status-label");
+  if (statusPill && statusLabel) {
+    statusPill.classList.toggle("is-demo", data.is_demo);
+    statusPill.classList.toggle("is-live", !data.is_demo);
+    statusLabel.textContent = data.is_demo ? "Demo board" : "Live FigJam board";
+    statusPill.hidden = false;
+  }
+}
+
 connectBtn.addEventListener("click", async () => {
   connectError.hidden = true;
   setBusy(connectBtn, true, "Connect / Select FigJam");
@@ -70,48 +114,7 @@ connectBtn.addEventListener("click", async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Could not connect to FigJam.");
-
-    // A successful connect resets analysis/personas server-side
-    // (_figjam_state in app.py) - any results or persona cards already on
-    // screen from a previous connection are now stale and would fail if
-    // pushed, so clear them rather than leaving them looking valid.
-    resultsSection.hidden = true;
-    personasSection.hidden = true;
-    askSection.hidden = true;
-    personasList.innerHTML = "";
-    personasStatusList.innerHTML = "";
-    personasStatusList.hidden = true;
-    pushPersonasBar.hidden = true;
-    personaPreviewsSection.hidden = true;
-    personaPreviewsList.innerHTML = "";
-    personaPreviewsError.hidden = true;
-    state.personas = [];
-
-    overviewGrid.innerHTML = [
-      ["Board", data.overview.board_name],
-      ["Research items", data.overview.research_items],
-      ["Sections", data.overview.sections],
-      ["Participants", data.overview.participants ?? "n/a"],
-    ].map(([label, value]) =>
-      `<div class="overview-tile"><div class="value">${escapeHtml(String(value))}</div><div class="label">${escapeHtml(label)}</div></div>`
-    ).join("");
-
-    overviewSection.hidden = false;
-    activitySection.hidden = false;
-    renderActivity(data.activity);
-
-    state.items = {};
-    (data.items || []).forEach((item) => { state.items[item.id] = item; });
-    renderDebugPanel(data.items || []);
-
-    const statusPill = document.getElementById("board-status-pill");
-    const statusLabel = document.getElementById("board-status-label");
-    if (statusPill && statusLabel) {
-      statusPill.classList.toggle("is-demo", data.is_demo);
-      statusPill.classList.toggle("is-live", !data.is_demo);
-      statusLabel.textContent = data.is_demo ? "Demo board" : "Live FigJam board";
-      statusPill.hidden = false;
-    }
+    applyConnectResult(data);
   } catch (err) {
     connectError.textContent = err.message;
     connectError.hidden = false;
@@ -169,14 +172,20 @@ function renderDebugPanel(items) {
   section.hidden = false;
 }
 
+// Maps a decision button's verb ("approve") to the past-tense status the
+// backend actually stores ("approved") - "edit" is handled separately
+// below, since clicking it only opens the editor, it doesn't submit a
+// review by itself (that happens on "Save edit").
+const DECISION_TO_STATUS = { approve: "approved", edit: "edited", challenge: "challenged", reject: "rejected" };
+
 function makeDecisionRow(item, onChange) {
   const row = document.createElement("div");
   row.className = "decision-row";
-  ["approve", "edit", "challenge", "reject"].forEach((decision) => {
+  ["approve", "edit", "challenge"].forEach((decision) => {
     const btn = document.createElement("button");
     btn.textContent = decision[0].toUpperCase() + decision.slice(1);
     btn.dataset.decision = decision;
-    btn.className = item.decision === decision ? "active" : "";
+    btn.className = item.status === DECISION_TO_STATUS[decision] ? "active" : "";
     btn.addEventListener("click", () => onChange(decision));
     row.appendChild(btn);
   });
@@ -197,31 +206,74 @@ function renderThemeCard(theme) {
   return card;
 }
 
+const STATUS_LABELS = { approved: "Approved", edited: "Edited", challenged: "Challenged", rejected: "Rejected" };
+
+// Persists a review decision to the backend (POST /api/figjam/insights/
+// <id>/review) so it survives a page reload - the server-side analysis
+// dict is the one source of truth, never just this in-memory JS object.
+async function submitInsightReview(insight, errorEl, status, editedText) {
+  errorEl.hidden = true;
+  try {
+    const res = await fetch(apiUrl(`/api/figjam/insights/${encodeURIComponent(insight.id)}/review`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, edited_text: editedText }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Could not save this review decision.");
+    Object.assign(insight, data.insight);
+    insight._editing = false;
+    renderInsights();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  }
+}
+
 function renderInsightCard(insight) {
   const card = document.createElement("div");
-  card.className = `card decision-${insight.decision || "pending"}`;
+  card.className = `card decision-${insight.status || "pending"}`;
+
+  const effectiveText = insight.status === "edited" && insight.edited_statement ? insight.edited_statement : insight.statement;
+  const statusLabel = STATUS_LABELS[insight.status];
+
   card.innerHTML = `
-    <h4>${escapeHtml(insight.id)}: ${escapeHtml(insight.statement)}</h4>
+    <h4>${escapeHtml(insight.id)}: ${escapeHtml(effectiveText)}</h4>
     <div class="meta">
+      ${statusLabel ? `<span class="badge status-badge status-${insight.status}">${escapeHtml(statusLabel.toUpperCase())}</span>` : ""}
       ${verdictBadge(insight)}
       ${confidenceBadge(insight)}
       ${evidenceChips(insight.evidence)}
     </div>
+    ${insight.status === "edited" ? `<div class="edited-note">Researcher-edited &middot; originally: "${escapeHtml(insight.statement)}"</div>` : ""}
     <div class="critic-note"><strong>Research Critic:</strong> ${escapeHtml(insight.verdict_note || "")}</div>
+    <p class="insight-review-error error-banner" hidden></p>
   `;
 
-  if (insight.decision === "edit") {
+  const errorEl = card.querySelector(".insight-review-error");
+
+  if (insight._editing) {
     const editArea = document.createElement("textarea");
     editArea.className = "edit-field";
     editArea.rows = 2;
-    editArea.value = insight.statement;
-    editArea.addEventListener("input", () => { insight.statement = editArea.value; });
+    editArea.value = effectiveText;
     card.appendChild(editArea);
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "btn btn-secondary";
+    saveBtn.textContent = "Save edit";
+    saveBtn.addEventListener("click", () => submitInsightReview(insight, errorEl, "edited", editArea.value));
+    card.appendChild(saveBtn);
   }
 
   card.appendChild(makeDecisionRow(insight, (decision) => {
-    insight.decision = decision;
-    renderInsights();
+    if (decision === "edit") {
+      insight._editing = true;
+      renderInsights();
+      return;
+    }
+    submitInsightReview(insight, errorEl, DECISION_TO_STATUS[decision], null);
   }));
 
   return card;
@@ -243,6 +295,39 @@ function renderInsights() {
   state.insights.forEach((i) => insightsList.appendChild(renderInsightCard(i)));
 }
 
+// Shared by the "Analyze research" click handler and the page-load
+// rehydration path below (init()) - `data` is the same shape both
+// /api/figjam/analyze and /api/figjam/state's "analysis" field return, so
+// one function renders either. Insight review status (status/
+// edited_statement) comes straight from the server now - it's no longer a
+// frontend-only "decision" field that a reload would silently lose.
+function applyAnalyzeResult(data) {
+  state.themes = data.themes || [];
+  state.insights = data.insights || [];
+  state.contradictions = data.contradictions || [];
+  state.gaps = data.research_gaps || [];
+  state.opportunities = data.design_opportunities || [];
+
+  themesList.innerHTML = "";
+  state.themes.forEach((t) => themesList.appendChild(renderThemeCard(t)));
+
+  renderInsights();
+
+  contradictionsList.innerHTML = "";
+  if (state.contradictions.length === 0) {
+    contradictionsList.innerHTML = `<p class="panel-sub">None found.</p>`;
+  } else {
+    state.contradictions.forEach((c) => contradictionsList.appendChild(renderContradictionCard(c)));
+  }
+
+  gapsList.innerHTML = state.gaps.map((g) => `<li>${escapeHtml(g)}</li>`).join("") || `<li>None identified.</li>`;
+  opportunitiesList.innerHTML = state.opportunities.map((o) => `<li>${escapeHtml(o)}</li>`).join("") || `<li>None identified.</li>`;
+
+  resultsSection.hidden = false;
+  personasSection.hidden = false;
+  askSection.hidden = false;
+}
+
 runAnalysisBtn.addEventListener("click", async () => {
   analyzeError.hidden = true;
   setBusy(runAnalysisBtn, true, "Analyze research");
@@ -252,31 +337,8 @@ runAnalysisBtn.addEventListener("click", async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Analysis failed.");
 
-    state.themes = data.themes || [];
-    state.insights = (data.insights || []).map((i) => ({ ...i, decision: null }));
-    state.contradictions = data.contradictions || [];
-    state.gaps = data.research_gaps || [];
-    state.opportunities = data.design_opportunities || [];
-
-    themesList.innerHTML = "";
-    state.themes.forEach((t) => themesList.appendChild(renderThemeCard(t)));
-
-    renderInsights();
-
-    contradictionsList.innerHTML = "";
-    if (state.contradictions.length === 0) {
-      contradictionsList.innerHTML = `<p class="panel-sub">None found.</p>`;
-    } else {
-      state.contradictions.forEach((c) => contradictionsList.appendChild(renderContradictionCard(c)));
-    }
-
-    gapsList.innerHTML = state.gaps.map((g) => `<li>${escapeHtml(g)}</li>`).join("") || `<li>None identified.</li>`;
-    opportunitiesList.innerHTML = state.opportunities.map((o) => `<li>${escapeHtml(o)}</li>`).join("") || `<li>None identified.</li>`;
-
+    applyAnalyzeResult(data);
     renderActivity(data.activity);
-    resultsSection.hidden = false;
-    personasSection.hidden = false;
-    askSection.hidden = false;
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) {
     analyzeError.textContent = err.message;
@@ -566,6 +628,16 @@ function appendStatusStep(label) {
   personasStatusList.appendChild(li);
 }
 
+// Shared by the "Generate Personas in FigJam" click handler and the
+// page-load rehydration path below (init()).
+function applyPersonasResult(personas) {
+  personasList.innerHTML = "";
+  state.personas = personas || [];
+  state.personas.forEach((p) => personasList.appendChild(renderPersonaCard(p)));
+  renderPersonaPreviews(state.personas);
+  if (state.personas.length) pushPersonasBar.hidden = false;
+}
+
 generatePersonasBtn.addEventListener("click", async () => {
   personasError.hidden = true;
   pushPersonasBar.hidden = true;
@@ -595,11 +667,7 @@ generatePersonasBtn.addEventListener("click", async () => {
     personasStatusList.innerHTML = "";
     (data.step_activity || []).forEach((entry) => appendStatusStep(`✓ ${entry.label}`));
 
-    state.personas = data.personas || [];
-    state.personas.forEach((p) => personasList.appendChild(renderPersonaCard(p)));
-    renderPersonaPreviews(state.personas);
-
-    pushPersonasBar.hidden = false;
+    applyPersonasResult(data.personas);
   } catch (err) {
     appendStatusStep(`✗ ${err.message}`);
     personasError.textContent = err.message;
@@ -637,3 +705,34 @@ pushPersonasBtn.addEventListener("click", async () => {
     setBusy(pushPersonasBtn, false, "Push Personas to FigJam");
   }
 });
+
+// Rehydrates the page from server-side session state on load, so a browser
+// reload doesn't lose a connected board, its analysis (including every
+// insight's researcher-review status), or generated personas - none of
+// that ever lived only in this file's in-memory `state`, only the server's
+// _figjam_state does, and this just re-fetches it. A fresh visit (nothing
+// connected yet) leaves the page exactly at its normal starting state.
+async function init() {
+  try {
+    const res = await fetch(apiUrl("/api/figjam/state"));
+    const data = await res.json();
+    if (!res.ok || !data.connected) return;
+
+    applyConnectResult({
+      overview: data.overview, activity: data.activity, is_demo: data.is_demo, items: data.items,
+    });
+
+    if (data.analysis) {
+      applyAnalyzeResult(data.analysis);
+    }
+
+    if (data.personas && data.personas.length) {
+      applyPersonasResult(data.personas);
+    }
+  } catch (err) {
+    // A failed rehydration just leaves the page at its normal "Connect
+    // FigJam" starting state - the researcher can always reconnect manually.
+  }
+}
+
+init();

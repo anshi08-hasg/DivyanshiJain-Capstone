@@ -28,6 +28,65 @@ class FigJamAgentError(Exception):
     """Raised for any pipeline failure that should surface as a clear message."""
 
 
+# --- Researcher review status for insights -------------------------------
+#
+# Confidence (computed above, in _evidence_confidence) answers "how strongly
+# is this supported by evidence?". Review status is a separate axis entirely:
+# "what does the researcher want done with this finding?" A insight can be
+# CONFIDENCE: STRONG and REVIEW STATUS: CHALLENGED at the same time - one
+# does not override the other, and nothing here ever recomputes confidence
+# from review status or vice versa.
+
+_REVIEW_STATUSES = ("approved", "edited", "challenged", "rejected")
+_ACCEPTED_STATUSES = ("approved", "edited")
+
+
+def _effective_statement(insight: dict[str, Any]) -> str:
+    """The text downstream consumers (persona generation, Push to FigJam)
+    should use: the researcher's edited text if this insight was edited, the
+    original LLM statement otherwise. The original is never overwritten -
+    "statement" always stays exactly what the Pattern Finder produced, for
+    traceability, even after an edit."""
+    if insight.get("status") == "edited" and insight.get("edited_statement"):
+        return insight["edited_statement"]
+    return insight.get("statement", "")
+
+
+def _is_accepted(insight: dict[str, Any]) -> bool:
+    """Only approved/edited insights feed downstream synthesis (persona
+    generation, Push to FigJam) - pending, challenged, and rejected insights
+    do not. This only gates what's USED downstream; every insight of every
+    status stays visible and stored in the review interface regardless."""
+    return insight.get("status") in _ACCEPTED_STATUSES
+
+
+def set_insight_review(analysis: dict[str, Any], insight_id: str, status: str, edited_text: str | None = None) -> dict[str, Any]:
+    """Updates one insight's researcher-review status in place, in the same
+    analysis dict already held in server-side session state (no new
+    persistence system - this reuses the exact in-memory store _figjam_state
+    already keeps for everything else). Returns the updated insight dict.
+
+    Never touches evidence ids, participant coverage, or confidence - those
+    stay exactly as computed by the Pattern Finder/Research Critic/evidence
+    verification. Never invents a new evidence id: an edit only ever changes
+    the insight's own prose, not what it cites."""
+    if status not in _REVIEW_STATUSES:
+        raise ValueError(f"Unknown review status: {status!r}. Must be one of {_REVIEW_STATUSES}.")
+
+    insight = next((i for i in analysis.get("insights", []) if i.get("id") == insight_id), None)
+    if insight is None:
+        raise ValueError(f"No insight with id {insight_id!r} in the current analysis.")
+
+    if status == "edited":
+        edited_text = (edited_text or "").strip()
+        if not edited_text:
+            raise ValueError("Edited insight text must not be empty.")
+        insight["edited_statement"] = edited_text
+
+    insight["status"] = status
+    return insight
+
+
 def _step(label: str) -> dict[str, Any]:
     return {"label": label, "at": time.strftime("%H:%M:%S")}
 
@@ -70,9 +129,16 @@ Rules:
   knowledge, common research patterns, or what this topic "usually" involves.
   If the board is about a topic you don't recognize, that is fine - analyze
   what is actually written, not what a typical study on that topic would say.
-- Every theme, insight, and contradiction must cite the exact item ids
-  (e.g. "N3") that support it. Never invent an id, a participant, or a quote
-  that was not given to you.
+- EVIDENCE ID RULE: every id in every "evidence" field MUST be copied
+  exactly from an item provided in the research context below. Never
+  create, infer, transform, shorten, rename, or invent an evidence id.
+  Evidence ids may have formats such as "43:146", "43:158", "43:166" -
+  treat them as opaque strings, not a pattern to imitate or continue. Do
+  not use the illustrative placeholder ids from this schema as real
+  evidence ids. Before returning the final JSON, verify that every id you
+  output appears EXACTLY in the provided research context; if you cannot
+  find an exact matching id, do not cite that evidence. Never invent an id,
+  a participant, or a quote that was not given to you.
 - A theme or insight needs at least two distinct supporting items to be
   called "recurring"; a single-item finding should still be reported but
   with only one id cited, not inflated.
@@ -89,13 +155,13 @@ commentary, matching exactly this schema:
 
 {
   "themes": [
-    {"id": "TH1", "name": "string", "evidence": ["N2", "N3"], "strength": "weak | medium | strong", "rationale": "string or null"}
+    {"id": "TH1", "name": "string", "evidence": ["<exact id copied from an item above>"], "strength": "weak | medium | strong", "rationale": "string or null"}
   ],
   "insights": [
-    {"id": "INS1", "statement": "string", "evidence": ["N2", "N3"], "strength": "weak | medium | strong"}
+    {"id": "INS1", "statement": "string", "evidence": ["<exact id copied from an item above>"], "strength": "weak | medium | strong"}
   ],
   "contradictions": [
-    {"id": "CON1", "description": "string", "evidence": ["N11", "N13"]}
+    {"id": "CON1", "description": "string", "evidence": ["<exact id copied from an item above>"]}
   ],
   "research_gaps": ["string"],
   "design_opportunities": ["string"]
@@ -114,7 +180,8 @@ For each insight, decide:
 - "contradictory": other research items in the board conflict with it.
 
 Be specific: name the evidence count, and if contradictory, cite the
-conflicting item id(s) even if the Pattern Finder didn't.
+conflicting item id(s) even if the Pattern Finder didn't - copied exactly,
+character-for-character, from the research context, never invented.
 
 Respond with ONLY a single valid JSON object, no markdown fences, no
 commentary, matching exactly this schema:
@@ -131,15 +198,24 @@ their own connected research board. You are given the full set of research
 items (with ids) and the themes/insights/contradictions already found.
 
 Answer ONLY using this material. If the material does not support an answer,
-say so explicitly rather than guessing or using general knowledge. Cite item
-ids for any claim you make.
+say so explicitly rather than guessing or using general knowledge.
+
+EVIDENCE ID RULE: every id you cite (inline in "answer" and in "evidence")
+MUST be copied exactly from an item provided in the research context below.
+Never create, infer, transform, shorten, rename, or invent an evidence id.
+Evidence ids may have formats such as "43:146", "43:158", "43:166" - treat
+them as opaque strings, not a pattern to imitate or continue. Do not use
+the illustrative placeholder ids from this schema as real evidence ids.
+Before returning the final JSON, verify that every id you output appears
+EXACTLY in the provided research context; if you cannot find an exact
+matching id, do not cite that evidence.
 
 Respond with ONLY a single valid JSON object, no markdown fences, no
 commentary, matching exactly this schema:
 
 {
-  "answer": "string, cites item ids inline like (N2, N3)",
-  "evidence": ["N2", "N3"],
+  "answer": "string, cites item ids inline like (<exact id>, <exact id>)",
+  "evidence": ["<exact id copied from an item above>"],
   "grounded": true
 }
 
@@ -258,6 +334,12 @@ def analyze_research(context: FigJamResearchContext) -> dict[str, Any]:
         else:
             insight["verdict"] = "weak"
             insight["verdict_note"] = "Research Critic did not return a verdict for this insight."
+
+        # Researcher review state starts untouched ("pending") - separate
+        # from confidence/verdict above, and never fed downstream until the
+        # researcher explicitly approves or edits it (see _is_accepted).
+        insight["status"] = "pending"
+        insight["edited_statement"] = None
 
     activity.append(_step("Research Critic returned verdicts"))
 
