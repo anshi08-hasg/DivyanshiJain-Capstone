@@ -1459,3 +1459,37 @@ machine) was verified live.
   board), connected and analyzed, and confirmed via a real
   headless-Chrome screenshot that every insight card shows only
   Approve/Edit/Challenge.
+
+## figmaconnecttry branch — Removed the manual "Analyze research" step
+
+### What shipped
+- User asked to reduce the number of steps: removed the standalone
+  "Analyze research" button entirely - `connectBtn`'s click handler now
+  chains straight into `/api/figjam/analyze` immediately after a
+  successful `/api/figjam/connect`, so Themes/Insights/Contradictions/
+  Research Gaps/Design Opportunities (and the "Push to FigJam" button)
+  appear from one click on "Connect / Select FigJam" instead of two
+  separate actions.
+- Connect and analyze failures stay visually distinct: a connect failure
+  still shows in the Connect panel's own error banner (and stops before
+  ever attempting analysis); an analyze failure (after a successful
+  connect) shows in the existing Agent Activity panel's error banner,
+  reusing both banners exactly as they worked before, just triggered by
+  one continuous action instead of two clicks.
+
+### What broke / what changed
+- Nothing broke; `applyAnalyzeResult()` (already extracted for the
+  page-reload rehydration path) is reused as-is for the new automatic
+  call, so there's no duplicated rendering logic between the manual and
+  automatic paths - there's no manual path left at all now.
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 60/60 passing, unchanged
+  (frontend-only change).
+- **Live verification:** ran the actual Flask app (mock provider, demo
+  board) and, via a temporary auto-click hook added only for this test
+  (removed before committing), confirmed a real click on "Connect /
+  Select FigJam" alone produces the full connect → analyze → themes/
+  insights/contradictions/research gaps/design opportunities → "Push to
+  FigJam" flow in one action, with no "Analyze research" button anywhere
+  on the page.
