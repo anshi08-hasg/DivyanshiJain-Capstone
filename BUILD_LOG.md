@@ -1297,3 +1297,140 @@ machine) was verified live.
   was verified directly via a standalone test harness, not through the
   full app's button-click wiring), and the exact pixel/font rendering on
   the user's own machine/browser.
+
+## figmaconnecttry branch — Separated clean persona presentation from research traceability
+
+### What shipped
+- User reported the persona card/PNG showed raw evidence node ids
+  ("43:146 (P1)") and a technical "CONFIDENCE: STRONG (3 items)" label
+  inline, making personas read like a research database dump instead of a
+  clean UX artifact. Both the webapp persona card (`figjam.js`) and the
+  exported PNG (`persona_renderer.js`) now show a subtle "Research-backed
+  · Based on N participants" line instead - omitted entirely when there's
+  no real evidence, never fabricated.
+- The full evidence detail didn't disappear: it moved behind a "View
+  Research Evidence" toggle on the webapp persona card, reusing the exact
+  same `confidenceBadge()`/`evidenceChips()` functions and data (evidence
+  strength, participant coverage, evidence chips with quote tooltips),
+  just relocated out of the main card into a collapsible secondary panel.
+
+### What broke / what changed
+- Caught a real bug via a headless-Chrome screenshot before shipping: the
+  evidence panel's `hidden` attribute was silently overridden by an
+  equal-specificity `display: grid` rule on the same class (author rules
+  beat the UA default at equal specificity); fixed with an explicit
+  `[hidden] { display: none }` override.
+- No backend changes - evidence extraction, confidence calculation,
+  evidence/participant ids, Themes/Insights/Contradictions, and Ask Your
+  Research are untouched.
+
+### Test evidence
+- Real headless-Chrome screenshots for the PNG export (clean card,
+  correct provenance line, zero raw ids/confidence text), the webapp card
+  collapsed (no evidence noise), and the webapp card expanded via a real
+  click (shows evidence strength, participants, and evidence chips
+  correctly). `python webapp/backend/test_figjam.py`: 48/48 passing,
+  unchanged (frontend-only change).
+
+## figmaconnecttry branch — Hardened LLM prompts against evidence-id hallucination
+
+### What shipped
+- User hit this live: persona generation on the real deployed board
+  failed with "none of them cited research item ids that actually exist
+  on the board." Root-caused to the Persona/Pattern Finder/Ask prompts'
+  own JSON schema examples using illustrative ids like "N2"/"N3", while
+  real FigJam boards use raw Figma node ids like "43:146" - a weaker model
+  (Groq's `openai/gpt-oss-120b`) can anchor on the schema's example format
+  instead of the real ids given in context, producing citations that
+  don't exist, which evidence verification then correctly (and silently)
+  drops every one of.
+- Replaced every illustrative "N2"/"N3" schema example across
+  `PERSONA_SYSTEM_PROMPT`, `ANALYZE_SYSTEM_PROMPT`, and
+  `ASK_SYSTEM_PROMPT` with a non-anchoring placeholder, and added an
+  explicit EVIDENCE ID RULE to each: copy ids exactly from the given
+  context, treat them as opaque strings, self-verify before returning
+  that every cited id genuinely appears in the provided research.
+  Strengthened `CRITIC_SYSTEM_PROMPT`'s free-text id-citation instruction
+  for consistency.
+
+### What broke / what changed
+- Audited the rest of the repo for the same anti-pattern per an explicit
+  follow-up ask: the demo-board fixture and `MockProvider`'s canned
+  responses (both use N1-N15 style ids) are self-consistent test
+  fixtures, not LLM-facing examples - verified programmatically that
+  every id the mock provider cites is a real id in its own fixture data,
+  so left unchanged. `pattern_analyzer.py`'s "P1-PP02" schema example is a
+  different, unrelated pipeline (the standalone Pattern Analyzer webapp)
+  where the model legitimately invents its own citation labels for
+  freeform pasted notes with no pre-existing per-note ids to copy from -
+  no verify-against-real-ids step exists there to protect, so left out of
+  scope.
+- Evidence verification logic itself (`_verify_evidence`, `_valid_ids`,
+  `_evidence_confidence`) was not touched - the audit found no bug there;
+  it was already correctly rejecting invented ids, which is what
+  surfaced this prompt-anchoring problem in the first place.
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 48/48 passing.
+
+## figmaconnecttry branch — Wired Approve/Edit/Challenge/Reject into real downstream behavior
+
+### What shipped
+- The four insight review buttons previously only changed local visual
+  state - never read by persona generation, Push to FigJam, or any
+  persistence layer. User asked for them to become part of the actual
+  research workflow.
+- `research_agent.py`: every insight now carries a `status`
+  (pending/approved/edited/challenged/rejected) and `edited_statement`.
+  The original `statement` is never overwritten, so it stays traceable
+  after an edit. New `_is_accepted()`/`_effective_statement()` helpers and
+  `set_insight_review()` (validates status, requires non-empty edit text,
+  never touches evidence ids/confidence - confidence and review status
+  are explicitly kept as two separate axes, e.g. "CONFIDENCE: STRONG" +
+  "REVIEW STATUS: CHALLENGED" is a valid, expected combination).
+- `personas.py`: persona generation's insight context now includes only
+  approved/edited insights, using edited text where applicable. Themes
+  are unaffected (no review mechanism exists for them).
+- `figma_layout.py`: Push to FigJam filters the same way via a new
+  `_filtered_analysis_for_push()` - rejected/challenged insights are never
+  written to the board, edited insights push their edited text.
+- `app.py`: new `POST /api/figjam/insights/<id>/review` and `GET
+  /api/figjam/state` endpoints. The latter lets the frontend rehydrate a
+  connected board/analysis/personas after a page reload from the same
+  server-side `_figjam_state` everything else already uses - no new
+  persistence system, since review status was never allowed to live only
+  in frontend JS.
+- `figjam.js`: Approve/Challenge/Reject POST immediately; Edit opens a
+  textarea first, then POSTs on "Save edit". Each insight shows a real
+  status badge and card tinting, plus "Researcher-edited · originally:
+  ..." so an edit is never silently invisible. A new `init()` rehydrates
+  the whole page from `/api/figjam/state` on load.
+- Also removed the leftover "(experimental)" tag from the page
+  title/header, per an earlier request in this same session.
+
+### What broke / what changed
+- Nothing broke; this extends the existing analysis/persona-generation/
+  Push-to-FigJam data flow rather than replacing it. Confidence and
+  evidence verification are untouched, confirmed by tests asserting
+  evidence ids/confidence stay identical across a review action.
+
+### Test evidence
+- Added 12 tests: review-status transitions and their guards (unknown
+  status, empty edit text, unknown insight id), `analyze_research()`
+  initializing status without disturbing evidence verification/
+  confidence/Research Critic, persona generation using a real captured
+  prompt to prove approved/edited insights are included (with edited
+  text) while rejected/challenged/pending are excluded, the same
+  filtering for Push to FigJam, and a full Flask-test-client round trip
+  proving a review decision survives a simulated reload (POST review →
+  GET state → same status/edited text/evidence ids come back).
+- **Real, live verification:** ran the actual Flask app (mock provider,
+  demo board) on a separate port, drove the full connect → analyze →
+  approve/edit → reload flow through real HTTP requests, and confirmed
+  via a real headless-Chrome screenshot of a fresh page load that the
+  rehydrated page correctly shows an "APPROVED" badge (with the original
+  text) and an "EDITED" badge (with the edited text plus the "originally:
+  ..." note) - proving persistence survives an actual browser reload, not
+  just a server-side dict.
+- `python webapp/backend/test_figjam.py`: 60/60 passing (48 prior + 12
+  new).
