@@ -14,7 +14,7 @@ from flask_cors import CORS
 
 from pattern_analyzer import analyze_patterns
 from report import build_report
-from figjam.research_agent import FigJamAgentError, analyze_research, ask_question, connect_board
+from figjam.research_agent import FigJamAgentError, analyze_research, ask_question, connect_board, set_insight_review
 from figjam.figma_layout import push_layout_to_figjam
 from figjam.figma_mcp_client import FigmaMCPError, request_pairing_code
 from figjam.personas import generate_personas
@@ -50,7 +50,7 @@ CORS(app, resources={r"/api/*": {"origins": _normalize_origin(os.environ.get("FR
 
 # In-memory, single-session state for the experimental FigJam agent (same
 # pattern as the Pattern Analyzer's module-level state: no DB for this MVP).
-_figjam_state: dict = {"context": None, "analysis": None, "personas": None, "activity": []}
+_figjam_state: dict = {"context": None, "analysis": None, "personas": None, "activity": [], "is_demo": None}
 
 
 @app.get("/")
@@ -139,6 +139,7 @@ def figjam_connect():
     _figjam_state["analysis"] = None
     _figjam_state["personas"] = None
     _figjam_state["activity"] = result["activity"]
+    _figjam_state["is_demo"] = result["is_demo"]
 
     return jsonify({
         "overview": context.overview(),
@@ -172,6 +173,46 @@ def figjam_analyze():
         "design_opportunities": result["design_opportunities"],
         "activity": _figjam_state["activity"],
     })
+
+
+@app.get("/api/figjam/state")
+def figjam_state():
+    """Lets the frontend rehydrate itself after a page reload - the review
+    state a researcher sets on an insight (and everything else in
+    _figjam_state) only ever lived in this server-side process memory, never
+    in the frontend's own JS state, so a reload just needs to re-fetch it
+    rather than losing it."""
+    context = _figjam_state.get("context")
+    if context is None:
+        return jsonify({"connected": False})
+
+    return jsonify({
+        "connected": True,
+        "overview": context.overview(),
+        "is_demo": _figjam_state.get("is_demo"),
+        "items": [i.to_dict() for i in context.items],
+        "analysis": _figjam_state.get("analysis"),
+        "personas": _figjam_state.get("personas"),
+        "activity": _figjam_state.get("activity", []),
+    })
+
+
+@app.post("/api/figjam/insights/<insight_id>/review")
+def figjam_review_insight(insight_id):
+    analysis = _figjam_state.get("analysis")
+    if analysis is None:
+        return jsonify({"error": "Run analysis before reviewing insights."}), 400
+
+    data = request.get_json(force=True, silent=True) or {}
+    status = data.get("status", "").strip().lower()
+    edited_text = data.get("edited_text")
+
+    try:
+        insight = set_insight_review(analysis, insight_id, status, edited_text)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"insight": insight})
 
 
 @app.post("/api/figjam/generate-personas")

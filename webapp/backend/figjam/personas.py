@@ -32,7 +32,9 @@ from llm_providers import get_provider
 from .models import FigJamResearchContext
 from .research_agent import (
     FigJamAgentError,
+    _effective_statement,
     _evidence_confidence,
+    _is_accepted,
     _parse_json,
     _step,
     _verify_evidence,
@@ -169,11 +171,20 @@ def generate_personas(context: FigJamResearchContext, analysis: dict[str, Any] |
 
     prompt_parts = [_persona_context_prompt(context)]
     if analysis:
-        prompt_parts.append(
-            "\n## Themes and insights already found\n"
-            + "Themes: " + ", ".join(t.get("name", "") for t in analysis.get("themes", []))
-            + "\nInsights: " + ", ".join(i.get("statement", "") for i in analysis.get("insights", []))
+        # Only researcher-accepted insights (approved/edited) inform persona
+        # clustering - a rejected or challenged insight must not influence
+        # the persona, per the explicit "only accepted research feeds
+        # downstream synthesis" rule. Themes have no researcher-review step
+        # of their own, so they're included as before. An edited insight
+        # contributes its edited text, never the original, without altering
+        # the underlying evidence ids it still cites.
+        accepted_insights = [i for i in analysis.get("insights", []) if _is_accepted(i)]
+        context_block = "\n## Themes and insights already found\n" + "Themes: " + ", ".join(
+            t.get("name", "") for t in analysis.get("themes", [])
         )
+        if accepted_insights:
+            context_block += "\nInsights: " + ", ".join(_effective_statement(i) for i in accepted_insights)
+        prompt_parts.append(context_block)
 
     activity.append(_step("Sent research context to the LLM (Persona Synthesist)"))
     raw = provider.complete(PERSONA_SYSTEM_PROMPT, "\n".join(prompt_parts))

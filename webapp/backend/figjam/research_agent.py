@@ -28,6 +28,65 @@ class FigJamAgentError(Exception):
     """Raised for any pipeline failure that should surface as a clear message."""
 
 
+# --- Researcher review status for insights -------------------------------
+#
+# Confidence (computed above, in _evidence_confidence) answers "how strongly
+# is this supported by evidence?". Review status is a separate axis entirely:
+# "what does the researcher want done with this finding?" A insight can be
+# CONFIDENCE: STRONG and REVIEW STATUS: CHALLENGED at the same time - one
+# does not override the other, and nothing here ever recomputes confidence
+# from review status or vice versa.
+
+_REVIEW_STATUSES = ("approved", "edited", "challenged", "rejected")
+_ACCEPTED_STATUSES = ("approved", "edited")
+
+
+def _effective_statement(insight: dict[str, Any]) -> str:
+    """The text downstream consumers (persona generation, Push to FigJam)
+    should use: the researcher's edited text if this insight was edited, the
+    original LLM statement otherwise. The original is never overwritten -
+    "statement" always stays exactly what the Pattern Finder produced, for
+    traceability, even after an edit."""
+    if insight.get("status") == "edited" and insight.get("edited_statement"):
+        return insight["edited_statement"]
+    return insight.get("statement", "")
+
+
+def _is_accepted(insight: dict[str, Any]) -> bool:
+    """Only approved/edited insights feed downstream synthesis (persona
+    generation, Push to FigJam) - pending, challenged, and rejected insights
+    do not. This only gates what's USED downstream; every insight of every
+    status stays visible and stored in the review interface regardless."""
+    return insight.get("status") in _ACCEPTED_STATUSES
+
+
+def set_insight_review(analysis: dict[str, Any], insight_id: str, status: str, edited_text: str | None = None) -> dict[str, Any]:
+    """Updates one insight's researcher-review status in place, in the same
+    analysis dict already held in server-side session state (no new
+    persistence system - this reuses the exact in-memory store _figjam_state
+    already keeps for everything else). Returns the updated insight dict.
+
+    Never touches evidence ids, participant coverage, or confidence - those
+    stay exactly as computed by the Pattern Finder/Research Critic/evidence
+    verification. Never invents a new evidence id: an edit only ever changes
+    the insight's own prose, not what it cites."""
+    if status not in _REVIEW_STATUSES:
+        raise ValueError(f"Unknown review status: {status!r}. Must be one of {_REVIEW_STATUSES}.")
+
+    insight = next((i for i in analysis.get("insights", []) if i.get("id") == insight_id), None)
+    if insight is None:
+        raise ValueError(f"No insight with id {insight_id!r} in the current analysis.")
+
+    if status == "edited":
+        edited_text = (edited_text or "").strip()
+        if not edited_text:
+            raise ValueError("Edited insight text must not be empty.")
+        insight["edited_statement"] = edited_text
+
+    insight["status"] = status
+    return insight
+
+
 def _step(label: str) -> dict[str, Any]:
     return {"label": label, "at": time.strftime("%H:%M:%S")}
 
@@ -275,6 +334,12 @@ def analyze_research(context: FigJamResearchContext) -> dict[str, Any]:
         else:
             insight["verdict"] = "weak"
             insight["verdict_note"] = "Research Critic did not return a verdict for this insight."
+
+        # Researcher review state starts untouched ("pending") - separate
+        # from confidence/verdict above, and never fed downstream until the
+        # researcher explicitly approves or edits it (see _is_accepted).
+        insight["status"] = "pending"
+        insight["edited_statement"] = None
 
     activity.append(_step("Research Critic returned verdicts"))
 

@@ -12,6 +12,7 @@ from typing import Any
 
 from . import figma_mcp_client as mcp_client
 from .layout_geometry import Rect, assert_no_overlaps, grid_positions
+from .research_agent import _effective_statement, _is_accepted
 
 # figjam_create_stickies only accepts this fixed color enum (confirmed via the
 # live tool schema), not arbitrary hex values.
@@ -122,10 +123,28 @@ def build_layout_plan(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     return plan
 
 
+def _filtered_analysis_for_push(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Only researcher-accepted insights (approved/edited) are pushed - a
+    rejected or challenged insight is never duplicated into the final FigJam
+    output, per the explicit "only push approved/edited research-derived
+    content" rule. Themes/contradictions/research gaps/design opportunities
+    have no researcher-review step of their own, so they pass through
+    unfiltered, exactly as before. An edited insight pushes its edited text,
+    never the original - the original stays in server-side state for
+    traceability, it just isn't what gets written to the board."""
+    filtered = dict(analysis)
+    filtered["insights"] = [
+        {**insight, "statement": _effective_statement(insight)}
+        for insight in analysis.get("insights", [])
+        if _is_accepted(insight)
+    ]
+    return filtered
+
+
 async def push_layout_to_figjam(analysis: dict[str, Any]) -> dict[str, Any]:
     """Creates a real FigJam section per group, with a grid of stickies inside
     it, on the connected board. Returns a summary for the Agent Activity log."""
-    plan = build_layout_plan(analysis)
+    plan = build_layout_plan(_filtered_analysis_for_push(analysis))
     if not plan:
         raise ValueError("Nothing to push: run analysis first, there are no themes/insights/etc. yet.")
 
