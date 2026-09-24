@@ -6,7 +6,6 @@ const overviewGrid = document.getElementById("overview-grid");
 
 const activitySection = document.getElementById("activity-section");
 const activityList = document.getElementById("activity-list");
-const runAnalysisBtn = document.getElementById("run-analysis-btn");
 const analyzeError = document.getElementById("analyze-error");
 
 const resultsSection = document.getElementById("results-section");
@@ -104,6 +103,7 @@ function applyConnectResult(data) {
 
 connectBtn.addEventListener("click", async () => {
   connectError.hidden = true;
+  analyzeError.hidden = true;
   setBusy(connectBtn, true, "Connect / Select FigJam");
 
   try {
@@ -118,6 +118,23 @@ connectBtn.addEventListener("click", async () => {
   } catch (err) {
     connectError.textContent = err.message;
     connectError.hidden = false;
+    setBusy(connectBtn, false, "Connect / Select FigJam");
+    return;
+  }
+
+  // Analysis now runs automatically right after a successful connect - the
+  // separate manual "Analyze research" button was removed per an explicit
+  // ask to reduce the number of steps: Connect and Analyze are now one
+  // continuous action from the researcher's point of view.
+  try {
+    const analyzeRes = await fetch(apiUrl("/api/figjam/analyze"), { method: "POST" });
+    const analyzeData = await analyzeRes.json();
+    if (!analyzeRes.ok) throw new Error(analyzeData.error || "Analysis failed.");
+    applyAnalyzeResult(analyzeData);
+    renderActivity(analyzeData.activity);
+  } catch (err) {
+    analyzeError.textContent = err.message;
+    analyzeError.hidden = false;
   } finally {
     setBusy(connectBtn, false, "Connect / Select FigJam");
   }
@@ -327,26 +344,6 @@ function applyAnalyzeResult(data) {
   personasSection.hidden = false;
   askSection.hidden = false;
 }
-
-runAnalysisBtn.addEventListener("click", async () => {
-  analyzeError.hidden = true;
-  setBusy(runAnalysisBtn, true, "Analyze research");
-
-  try {
-    const res = await fetch(apiUrl("/api/figjam/analyze"), { method: "POST" });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Analysis failed.");
-
-    applyAnalyzeResult(data);
-    renderActivity(data.activity);
-    resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
-  } catch (err) {
-    analyzeError.textContent = err.message;
-    analyzeError.hidden = false;
-  } finally {
-    setBusy(runAnalysisBtn, false, "Analyze research");
-  }
-});
 
 askBtn.addEventListener("click", async () => {
   const question = askInput.value.trim();
