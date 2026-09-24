@@ -70,9 +70,16 @@ Rules:
   knowledge, common research patterns, or what this topic "usually" involves.
   If the board is about a topic you don't recognize, that is fine - analyze
   what is actually written, not what a typical study on that topic would say.
-- Every theme, insight, and contradiction must cite the exact item ids
-  (e.g. "N3") that support it. Never invent an id, a participant, or a quote
-  that was not given to you.
+- EVIDENCE ID RULE: every id in every "evidence" field MUST be copied
+  exactly from an item provided in the research context below. Never
+  create, infer, transform, shorten, rename, or invent an evidence id.
+  Evidence ids may have formats such as "43:146", "43:158", "43:166" -
+  treat them as opaque strings, not a pattern to imitate or continue. Do
+  not use the illustrative placeholder ids from this schema as real
+  evidence ids. Before returning the final JSON, verify that every id you
+  output appears EXACTLY in the provided research context; if you cannot
+  find an exact matching id, do not cite that evidence. Never invent an id,
+  a participant, or a quote that was not given to you.
 - A theme or insight needs at least two distinct supporting items to be
   called "recurring"; a single-item finding should still be reported but
   with only one id cited, not inflated.
@@ -89,13 +96,13 @@ commentary, matching exactly this schema:
 
 {
   "themes": [
-    {"id": "TH1", "name": "string", "evidence": ["N2", "N3"], "strength": "weak | medium | strong", "rationale": "string or null"}
+    {"id": "TH1", "name": "string", "evidence": ["<exact id copied from an item above>"], "strength": "weak | medium | strong", "rationale": "string or null"}
   ],
   "insights": [
-    {"id": "INS1", "statement": "string", "evidence": ["N2", "N3"], "strength": "weak | medium | strong"}
+    {"id": "INS1", "statement": "string", "evidence": ["<exact id copied from an item above>"], "strength": "weak | medium | strong"}
   ],
   "contradictions": [
-    {"id": "CON1", "description": "string", "evidence": ["N11", "N13"]}
+    {"id": "CON1", "description": "string", "evidence": ["<exact id copied from an item above>"]}
   ],
   "research_gaps": ["string"],
   "design_opportunities": ["string"]
@@ -114,7 +121,8 @@ For each insight, decide:
 - "contradictory": other research items in the board conflict with it.
 
 Be specific: name the evidence count, and if contradictory, cite the
-conflicting item id(s) even if the Pattern Finder didn't.
+conflicting item id(s) even if the Pattern Finder didn't - copied exactly,
+character-for-character, from the research context, never invented.
 
 Respond with ONLY a single valid JSON object, no markdown fences, no
 commentary, matching exactly this schema:
@@ -131,15 +139,24 @@ their own connected research board. You are given the full set of research
 items (with ids) and the themes/insights/contradictions already found.
 
 Answer ONLY using this material. If the material does not support an answer,
-say so explicitly rather than guessing or using general knowledge. Cite item
-ids for any claim you make.
+say so explicitly rather than guessing or using general knowledge.
+
+EVIDENCE ID RULE: every id you cite (inline in "answer" and in "evidence")
+MUST be copied exactly from an item provided in the research context below.
+Never create, infer, transform, shorten, rename, or invent an evidence id.
+Evidence ids may have formats such as "43:146", "43:158", "43:166" - treat
+them as opaque strings, not a pattern to imitate or continue. Do not use
+the illustrative placeholder ids from this schema as real evidence ids.
+Before returning the final JSON, verify that every id you output appears
+EXACTLY in the provided research context; if you cannot find an exact
+matching id, do not cite that evidence.
 
 Respond with ONLY a single valid JSON object, no markdown fences, no
 commentary, matching exactly this schema:
 
 {
-  "answer": "string, cites item ids inline like (N2, N3)",
-  "evidence": ["N2", "N3"],
+  "answer": "string, cites item ids inline like (<exact id>, <exact id>)",
+  "evidence": ["<exact id copied from an item above>"],
   "grounded": true
 }
 

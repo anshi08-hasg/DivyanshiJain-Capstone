@@ -59,9 +59,16 @@ Rules:
   participant's real name from the research.
 - "archetype" is a short (3-6 word) tagline describing the behavioural role
   this persona plays (e.g. "Social music controller", "Laid-back listener").
-- "evidence" must list the exact item ids (e.g. "N3") that support this
-  persona as a group. Never invent an id, a participant, or a quote that was
-  not given to you.
+- EVIDENCE ID RULE: every id in "evidence" (and any "source_id") MUST be
+  copied exactly from an item provided in the research context below. Never
+  create, infer, transform, shorten, rename, or invent an evidence id.
+  Evidence ids may have formats such as "43:146", "43:158", "43:166" -
+  treat them as opaque strings, not a pattern to imitate or continue. Do
+  not use the illustrative placeholder ids from this schema as real
+  evidence ids. Before returning the final JSON, verify that every id you
+  output appears EXACTLY in the provided research context; if you cannot
+  find an exact matching id, do not cite that evidence. Never invent an id,
+  a participant, or a quote that was not given to you.
 - Every profile field (age, role, location, digital_behaviour) must be
   `null` unless the given research explicitly states or clearly implies it.
   Do not fill a field with a plausible guess. A persona with mostly-null
@@ -100,8 +107,8 @@ commentary, matching exactly this schema:
       "pain_points": ["string"],
       "needs": ["string"],
       "motivations": ["string"],
-      "representative_quote": {"text": "string", "is_verbatim": true, "source_id": "N2 or null"},
-      "evidence": ["N2", "N3"]
+      "representative_quote": {"text": "string", "is_verbatim": true, "source_id": "<exact id copied from an item above, or null>"},
+      "evidence": ["<exact id copied from an item above>", "<another exact id copied from an item above>"]
     }
   ]
 }
