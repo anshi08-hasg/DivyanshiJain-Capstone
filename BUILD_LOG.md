@@ -1117,3 +1117,183 @@ machine) was verified live.
   described):** confirmed sharp corners, no visible strokes, and that
   truncated text stays inside its own box rather than bleeding into
   neighboring zones. `python webapp/backend/test_figjam.py`: 40/40 passing.
+
+## figmaconnecttry branch — Avatar image, white-box identity labels, full grid content
+
+### What shipped
+- Per a new reference image and an explicit "write full things in
+  goals/frustrations/needs" ask: name and archetype now render as white
+  label boxes with dark text (matching the reference), not white text
+  directly on the dark panel.
+- The photo placeholder is filled with a generic initials avatar
+  (`ui-avatars.com`) rather than left a flat gray box - deliberately not a
+  fabricated realistic photo of a specific non-existent person, per the
+  earlier explicit correction against inventing a realistic depiction.
+  Confirmed live: `figma_set_image_fill`'s real parameters are `nodeIds`
+  (array) + `imageData` (base64), undocumented in the tool's own schema.
+- The Goals/Frustrations/Needs grid is no longer truncated to a fixed
+  height: each column's body now sizes to its real (untruncated) content,
+  and the card's overall height (identity panel stretching to match) grows
+  accordingly. The photo/quote/background section above it stays exactly
+  as pixel-locked as before; only this grid adapts.
+
+### What broke / what changed
+- Nothing broke; this extended the previous commit's locked-template
+  design rather than replacing it (only the grid's height became
+  content-aware, everything above it stayed fixed).
+
+### Test evidence
+- Added tests for the white-box name/role styling, the grid body height
+  growing with more/longer content, and the avatar fetch failing closed
+  (returns `None`, doesn't crash the push) when the avatar service is
+  unreachable.
+- **Live, end to end, against the real connected board:** avatar fills
+  applied successfully to both persona cards, and a captured screenshot
+  showed a 4-bullet Needs column rendering in full with no ellipsis,
+  correctly growing that card taller than its neighbor.
+  `python webapp/backend/test_figjam.py`: 43/43 passing.
+
+## figmaconnecttry branch — Added profile fields (role/age/location/digital behaviour) to the FigJam card
+
+### What shipped
+- User compared the webapp preview (which already showed Role/Age/
+  Location/Digital behaviour) against the actual FigJam card and found
+  that zone missing - it was dropped during the pixel-template rebuild,
+  which only kept name + a short archetype tagline in the identity panel.
+- Added a "profile" zone to `PERSONA_TEMPLATE`, positioned right below the
+  role box, showing the same four fields the webapp already displayed
+  ("Not identified in research" when unsupported, never invented). Bumped
+  `_GRID_MIN_BODY_HEIGHT` so the identity panel (which stretches to match
+  the grid's height) always has enough room for it, even for a
+  minimal-content persona.
+
+### What broke / what changed
+- Found and fixed a second real rendering bug while verifying this live:
+  inspecting the created shape directly via `figma_execute` showed the
+  profile zone's background came back the correct dark color, but its text
+  came back black at 0.8 opacity instead of the requested white -
+  `textColor="#FFFFFF"` is mishandled by `figjam_create_shape_with_text`
+  specifically for pure white, even though darker values (e.g. `#222222`)
+  were already confirmed working correctly elsewhere on this same card.
+  Added `set_text_fill()`, which forces the real color via the plugin API
+  (`figma_execute`) after creation, the same pattern already used for
+  `cornerRadius`/strokes.
+- Live verification note: the cloud relay itself started timing out
+  (`httpx.ReadTimeout` against the community relay's own server, not just a
+  pairing-state issue) partway through this change. The profile zone's
+  presence/position was confirmed live in an earlier successful push in
+  this same session; the text-color fix specifically was verified by
+  directly inspecting the created shape's actual fill/text colors via
+  `figma_execute` (which is what caught the bug in the first place), but
+  not by a fresh end-to-end screenshot after the fix - the mechanism is
+  identical to the already-proven `cornerRadius`/stroke fix, applied to a
+  different property.
+
+### Test evidence
+- Added a test locking in that unsupported profile fields render as "Not
+  identified in research" on the card itself, not just in the webapp
+  preview. `python webapp/backend/test_figjam.py`: 44/44 passing.
+
+## figmaconnecttry branch — Eliminated content truncation in FigJam persona cards
+
+### What shipped
+- User's design philosophy reversed explicitly and completely: keep the
+  exact same canonical design (1200px width, 420/780 column split,
+  typography, colors) but never again hide, truncate, or replace
+  meaningful content with "..." to make it fit, and never show "Not
+  identified in research" for a field the research doesn't support (show
+  nothing instead). Rewrote `persona_layout.py`'s `_build_card` from a
+  fixed-coordinate template to a sequential, content-measuring layout:
+  width/typography/colors stay locked, height is fully derived from real
+  content (`_text_block_height`/`_bullets_block_height` estimate wrapped
+  line counts rather than truncating).
+- Removed `_truncate()` entirely and every fixed-height grid constant it
+  fed; unsupported profile fields (role/age/location/digital behaviour) are
+  now omitted from the card outright rather than shown with a placeholder
+  line.
+- Restored two content categories that had been silently dropped during
+  the earlier pixel-lock rebuilds - **Motivations** and a properly
+  separate **Behaviours** column (previously merged into "Needs") - and
+  added two the FigJam card never rendered at all despite already being
+  computed by the backend and shown in the webapp preview: **Participants**
+  (`participant_coverage`) and **Confidence**/evidence count, both only
+  when the pipeline actually produced them.
+
+### What broke / what changed
+- Since shape order is no longer fixed (name/role/profile now sit at the
+  end of a variable-length shape list instead of fixed early indices),
+  added `name_shape_index`/`role_shape_index`/`profile_shape_index`
+  (nullable) to the card dict so callers can locate them generically
+  instead of by hardcoded position. `push_personas_to_figjam()`'s
+  shape-creation loop already read these fields rather than hardcoding
+  positions, so it needed no changes.
+- Rewrote the 6 tests that hardcoded the old fixed shape indices or
+  asserted the old "Not identified in research" placeholder behavior, and
+  inverted the profile-field assertions to their opposite (unsupported
+  fields must be absent, not present as a placeholder).
+
+### Test evidence
+- Added tests for height growing without truncating the quote or
+  background, evidence ids never being dropped regardless of count, and
+  confidence/participants/motivations appearing only when the pipeline
+  actually supplied them.
+- `python webapp/backend/test_figjam.py`: 48/48 passing (44 prior + 4 new).
+
+## figmaconnecttry branch — Added downloadable Persona Preview PNG export to the web app
+
+### What shipped
+- New feature requested on top of the existing pipeline: a "Persona
+  previews" section below the existing "Generate Personas in FigJam"
+  result, rendering each validated persona as a downloadable 1600x880 PNG.
+- New `webapp/backend/frontend/persona_renderer.js`: one canonical
+  `renderPersonaToCanvas(persona, canvas)` function, drawing directly onto
+  a Canvas 2D context (no `html2canvas`, no remote image fetch, so exports
+  are never blocked by a tainted-canvas/CORS error on download). Reuses the
+  exact persona objects `/api/figjam/generate-personas` already returns -
+  no second LLM call, one source of persona content.
+- Design mirrors the FigJam card's content-fitting philosophy: nothing is
+  truncated, empty sections/unsupported fields are omitted rather than
+  shown as placeholders, near-duplicate bullets are deduplicated (never
+  distinct findings), and a photo placeholder shows initials rather than a
+  fabricated photo. A 3-tier font-size step-down (30/20/15.5px down to
+  24/18/13px) is tried before the canvas height (never width) is allowed
+  to grow past 880px, as a last-resort safety net against ever clipping
+  content off the bottom of a hard-fixed-size export.
+- Wired into `figjam.html`/`figjam.js`: populated right after a successful
+  "Generate Personas in FigJam" call, each preview with a "Download Persona
+  PNG" button producing `researchmate-persona-<slug>.png`. Existing FigJam
+  push/pipeline untouched.
+
+### What broke / what changed
+- Caught and fixed one real bug before shipping: the BACKGROUND heading
+  was rendering alone whenever a persona had no `short_description`,
+  violating the "no empty sections" rule - moved the heading inside the
+  same conditional as its body text.
+- No backend changes at all; this is a pure frontend addition reusing data
+  the backend already returns, so the existing test suite is unaffected.
+
+### Test evidence
+- No browser automation tool available in this environment, so verified
+  in layers: syntax-checked both changed/new JS files with `node --check`;
+  logic-tested the renderer headlessly via a mocked Canvas 2D context
+  (word-preserving text wrapping, conservative bullet deduplication,
+  empty-category omission, canvas dimensions); stress-tested a
+  deliberately pathological persona (6 verbose items x 5 categories, a
+  600+ character quote, 20 evidence ids) to confirm the smallest font tier
+  is tried before canvas height grows past 880px, and that every evidence
+  id survives intact.
+- **Real browser verification:** served the frontend locally and used
+  headless Chrome (`--headless=new --screenshot`) to render the actual
+  canvas output for both a typical persona (matches the reference's layout
+  hierarchy: photo placeholder, dark identity panel, quote, background,
+  3-column grid, evidence footer, all in full) and an empty/no-quote
+  persona (falls back to an evidence-derived summary line, no empty
+  BACKGROUND heading, no placeholder fields) - caught the heading bug
+  above from this second screenshot.
+- `python webapp/backend/test_figjam.py`: 48/48 passing, unchanged (no
+  backend code touched).
+- **Not tested:** the actual "Generate → Preview → Download" click flow
+  driven through the running app in a real browser (the renderer itself
+  was verified directly via a standalone test harness, not through the
+  full app's button-click wiring), and the exact pixel/font rendering on
+  the user's own machine/browser.
