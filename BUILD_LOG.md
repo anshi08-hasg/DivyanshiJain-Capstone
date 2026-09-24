@@ -1434,3 +1434,28 @@ machine) was verified live.
   just a server-side dict.
 - `python webapp/backend/test_figjam.py`: 60/60 passing (48 prior + 12
   new).
+
+## figmaconnecttry branch — Removed the Reject button from insight review actions
+
+### What shipped
+- User noticed Challenge and Reject behaved identically (both excluded an
+  insight from persona generation and Push to FigJam, per the prior
+  commit's filtering), making the two buttons read as redundant. Removed
+  Reject from `makeDecisionRow`'s button list - insights now offer
+  Approve/Edit/Challenge only.
+
+### What broke / what changed
+- Nothing broke; backend `rejected` status handling (`set_insight_review`,
+  `STATUS_LABELS`, the `.card.decision-rejected`/`.status-badge.status-
+  rejected` CSS) was deliberately left in place rather than ripped out,
+  so any insight that already has that status (from before this change,
+  or a direct API call) still renders correctly - it's just no longer
+  reachable from the UI.
+
+### Test evidence
+- `python webapp/backend/test_figjam.py`: 60/60 passing, unchanged
+  (frontend-only change).
+- **Live verification:** ran the actual Flask app (mock provider, demo
+  board), connected and analyzed, and confirmed via a real
+  headless-Chrome screenshot that every insight card shows only
+  Approve/Edit/Challenge.
