@@ -181,7 +181,7 @@ const DECISION_TO_STATUS = { approve: "approved", edit: "edited", challenge: "ch
 function makeDecisionRow(item, onChange) {
   const row = document.createElement("div");
   row.className = "decision-row";
-  ["approve", "edit", "challenge", "reject"].forEach((decision) => {
+  ["approve", "edit", "challenge"].forEach((decision) => {
     const btn = document.createElement("button");
     btn.textContent = decision[0].toUpperCase() + decision.slice(1);
     btn.dataset.decision = decision;
