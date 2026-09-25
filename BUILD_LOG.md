@@ -1493,3 +1493,91 @@ machine) was verified live.
   insights/contradictions/research gaps/design opportunities → "Push to
   FigJam" flow in one action, with no "Analyze research" button anywhere
   on the page.
+
+## figmaconnecttry branch — Redesigned the UI as a dark, premium dashboard
+
+### What shipped
+- User asked for a visual/aesthetic pass: "make the UI look like a pro
+  designer... aesthetic." Given a choice of three directions (refined
+  minimal, bold editorial, or dark premium dashboard), the user picked
+  dark premium dashboard.
+- Reworked the shared design tokens in `style.css` (`:root`) - deep
+  near-black background with a soft accent-glow gradient, layered dark
+  surfaces (panel lighter than page, inputs recessed darker than panel),
+  near-white/light-gray text scale, and a brighter green accent reserved
+  for glows/borders/badges/text-on-dark. Since both `index.html` and
+  `figjam.html` already consumed these variables consistently, this
+  cascaded across the whole app via a pure CSS change - no HTML/JS
+  touched.
+- Added recurring signature details: a small glowing accent-dot marker
+  before every section heading, glowing halos on featured CTAs, glass-card
+  panel treatment, a dark custom scrollbar, and a light "matting" frame
+  around persona PNG previews so the intentionally-light exported artifact
+  reads as a mounted photo against the dark dashboard.
+
+### What broke / what changed
+- `.edit-field` and `.ask-input-row input` had no explicit background/text
+  color at all - they'd have rendered as glaring white boxes with
+  invisible dark-on-dark text against the new theme. Fixed.
+- Filled accent buttons previously used white text on the accent green;
+  measured contrast (~2.3:1) was too low to read cleanly, so switched to
+  dark text on the bright accent fill (~8.7:1).
+- Several hardcoded light-mode status colors (edited/challenged/weak/
+  medium-confidence) would have been illegible or clashing on dark -
+  replaced with dark-appropriate translucent tints.
+
+### Test evidence
+- Verified live via headless-Chrome screenshots against the actual
+  running app (mock provider, demo board): empty and filled Pattern
+  Analyzer states, all four decision-button active states, the final
+  report, and the full FigJam flow through personas/evidence-panel/PNG
+  previews/debug table. `python webapp/backend/test_figjam.py`: 60/60
+  passing, unchanged (pure CSS change).
+
+## figmaconnecttry branch — Redesigned as "Precision Monochrome" - no neon, no glow
+
+### What shipped
+- User rejected the dark-premium-dashboard pass above as "too simple" and
+  asked for something more advanced/modern, explicitly with no glowing
+  lights on buttons - "like a pro UI designer with 20+ years of
+  experience." Ultracode was on for this turn, so the redesign ran through
+  a Workflow: 4 independent design directions (Editorial Swiss, Refined
+  SaaS Precision, Warm Sophisticated Neutral, High-Contrast Monochrome),
+  each proposed by its own agent, each independently scored by 3 judge
+  agents on modern/advanced feel, zero-neon restraint, legibility, and
+  system coherence, then synthesized into one implementable spec.
+- High-Contrast Monochrome won 2 of 3 judge panels outright. The
+  synthesis pulled true `#000`/`#fff` back to `#0a0a0b`/`#f5f5f3` (every
+  judge flagged pure black/white as an eye-fatigue risk for a tool
+  researchers stare at for hours) and grafted in the strongest details
+  from the other three directions - most notably an oversized hanging
+  quote-glyph on persona evidence excerpts, every judge's favorite single
+  detail across all four proposals.
+- Implemented the synthesis: one accent color total (a desaturated bone/
+  paper tone with no saturated hue component, structurally incapable of
+  reading as neon), reserved for exactly one filled action per screen.
+  Zero colored/glowing shadows anywhere - every `box-shadow` is now
+  `rgba(0,0,0,...)` or a plain inset edge; elevation comes from a
+  lightness step + hairline border only. Every badge/chip (confidence,
+  verdict, status, decision buttons) converted to outline-only -
+  transparent background, colored border+text, never a filled/tinted
+  chip, a hard rule with zero exceptions (every judge flagged a runner-up
+  direction's one filled-green badge as the last trace of the old neon
+  system). Also added a real type scale, a 4px-based spacing system, and
+  exactly 3 border-radii (2/4/8px, replacing the old soft 12-16px).
+
+### What broke / what changed
+- Caught and fixed two real bugs surfaced during implementation, not just
+  re-themed around them: the loading spinner was white and would have
+  been invisible against the new light button fill (made dark instead),
+  and a pre-existing gap-collapse between the pairing-code and connect
+  buttons that the old glow's blur radius had been visually masking
+  became visible once the glow was removed - added the missing margin.
+
+### Test evidence
+- Full headless-Chrome pass across both pages and every real state
+  (empty/filled forms, all decision-button states, final report, full
+  FigJam connect→analyze→review→personas→evidence-panel flow), catching
+  and fixing the button-spacing bug live before committing.
+  `python webapp/backend/test_figjam.py`: 60/60 passing - pure CSS
+  change, no HTML/JS touched.
