@@ -6,16 +6,17 @@
 .debug-summary::-webkit-details-marker { display: none; }
 
 .debug-count {
-  font-family: "SF Mono", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   margin: 10px 0;
+  color: var(--ink-500);
 }
 
 .debug-table-wrap {
   max-height: 340px;
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
 }
 
 .debug-table {
@@ -30,11 +31,11 @@
   background: var(--surface-sunken);
   text-align: left;
   padding: 8px 10px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--ink-500);
   text-transform: uppercase;
-  font-size: 0.7rem;
-  letter-spacing: 0.03em;
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
 }
 
 .debug-table td {
@@ -44,14 +45,35 @@
   vertical-align: top;
 }
 
-.badge-insufficient {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
+/* Confidence/verdict/status badges are outline-only everywhere in the app:
+   transparent background, a 1px colored border, colored text - never a
+   filled or tinted chip. "Strong/validated/approved" reads as ink_900
+   (near-white = the one positive/done signal) rather than green, since
+   green-on-dark is exactly the ingredient that read as neon before. */
+.badge-insufficient { color: var(--danger); border-color: rgba(201, 86, 74, 0.5); }
 
-.confidence-strong { background: var(--accent-soft); color: var(--accent-strong); }
-.confidence-medium { background: var(--warn-soft); color: var(--warn-strong); }
-.confidence-limited, .confidence-insufficient { background: var(--warn-soft); color: var(--warn); }
+.confidence-strong,
+.verdict-validated {
+  color: var(--ink-900);
+  border-color: var(--line-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.confidence-medium,
+.verdict-weak {
+  color: var(--warn-strong);
+  border-color: rgba(201, 138, 59, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.confidence-limited,
+.confidence-insufficient,
+.verdict-contradictory {
+  color: var(--danger);
+  border-color: rgba(201, 86, 74, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 .persona-grid {
   display: grid;
@@ -78,11 +100,12 @@
 .persona-avatar {
   width: 40px;
   height: 40px;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  color: var(--ink-900);
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 0.9rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -120,10 +143,10 @@
 
 .persona-columns h5, .persona-block h5 {
   margin: 0 0 6px;
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.6875rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
   color: var(--ink-500);
 }
 
@@ -136,23 +159,39 @@
   gap: 3px;
 }
 
+/* An oversized hanging quote glyph - the one deliberate, narrowly-scoped
+   graft of warmth into an otherwise strictly architectural system. Every
+   independent judge in the design review called this device out as the
+   single best signature detail across all four proposals, but recommended
+   confining it to evidence/quote content specifically rather than
+   adopting the full serif system it came from. */
 .persona-quote {
-  font-size: 0.88rem;
-  font-style: italic;
+  position: relative;
+  font-size: 0.9rem;
   color: var(--ink-700);
-  padding: 10px 12px;
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 6px 12px 6px 22px;
+  border-left: 2px solid var(--ink-300);
+  background: transparent;
+}
+
+.persona-quote::before {
+  content: "\201C";
+  position: absolute;
+  left: 0;
+  top: -0.15em;
+  font-size: 1.75rem;
+  line-height: 1;
+  color: var(--accent);
+  font-family: Georgia, "Times New Roman", serif;
 }
 
 .persona-quote .synthesized-tag {
   display: block;
   margin-top: 4px;
   font-style: normal;
-  font-size: 0.72rem;
+  font-size: 0.6875rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
   color: var(--ink-300);
 }
 
@@ -175,9 +214,9 @@
 
 .evidence-toggle {
   font-family: inherit;
-  font-size: 0.76rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--accent-strong);
+  color: var(--ink-700);
   background: none;
   border: none;
   padding: 2px 0;
@@ -194,6 +233,7 @@
   gap: 8px;
   padding: 12px;
   background: var(--surface-sunken);
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
 }
@@ -208,10 +248,10 @@
 }
 
 .evidence-panel-label {
-  font-weight: 700;
-  font-size: 0.7rem;
+  font-weight: 600;
+  font-size: 0.6875rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
   color: var(--ink-500);
   flex-shrink: 0;
 }
@@ -230,7 +270,7 @@
 
 .persona-previews-head h3 {
   margin: 0 0 4px;
-  font-size: 1rem;
+  font-size: 0.9375rem;
   font-weight: 700;
 }
 
@@ -259,8 +299,8 @@
 .persona-preview-canvas-wrap {
   /* The persona export is a deliberately light, presentation-ready
      artifact - a few pixels of pale "matting" around it reads as a photo
-     mounted in a frame against the dark dashboard, rather than a stark
-     white rectangle butting straight up against dark chrome. */
+     mounted in a frame against the dark chrome, rather than a stark white
+     rectangle butting straight up against it. */
   border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--line);
@@ -273,12 +313,12 @@
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .persona-preview-card-error {
   font-size: 0.85rem;
-  color: var(--warn);
+  color: var(--warn-strong);
 }
 
 .overview-grid {
@@ -289,7 +329,7 @@
 
 .overview-tile {
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: 14px 16px;
   background: var(--surface-sunken);
 }
@@ -301,11 +341,11 @@
 }
 
 .overview-tile .label {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
   color: var(--ink-500);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .activity-list {
@@ -319,23 +359,25 @@
 .activity-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 0.88rem;
   color: var(--ink-700);
   animation: fade-in 0.2s ease;
 }
 
+/* A plain outlined square with a checkmark, not a filled colored circle -
+   completion is read from the mark itself, not from a color. */
 .activity-list li::before {
   content: "\2713";
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-size: 0.7rem;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--ink-500);
+  color: var(--ink-900);
+  font-size: 0.65rem;
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -361,17 +403,13 @@
 }
 
 .verdict-badge {
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.6875rem;
+  font-weight: 600;
   padding: 3px 10px;
-  border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 1px solid var(--line);
 }
-
-.verdict-validated { background: var(--accent-soft); color: var(--accent-strong); }
-.verdict-weak { background: var(--warn-soft); color: var(--warn-strong); }
-.verdict-contradictory { background: var(--danger-soft); color: var(--danger); }
 
 .critic-note {
   font-size: 0.85rem;
@@ -383,9 +421,8 @@
 }
 
 .decision-row button.active[data-decision="challenge"] {
-  background: rgba(249, 115, 22, 0.18);
-  border-color: #f97316;
-  color: #fb923c;
+  border-color: var(--warn);
+  color: var(--warn-strong);
 }
 
 .ask-transcript {
@@ -395,7 +432,7 @@
 }
 
 .ask-turn {
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: 12px 14px;
   font-size: 0.9rem;
 }
@@ -410,7 +447,7 @@
 }
 
 .ask-turn.answer.not-grounded {
-  border-color: var(--warn);
+  border-color: rgba(201, 138, 59, 0.4);
   background: var(--warn-soft);
 }
 
@@ -429,10 +466,10 @@
 .ask-input-row input {
   flex: 1;
   font-family: inherit;
-  font-size: 0.92rem;
+  font-size: 0.9375rem;
   padding: 10px 14px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--surface-sunken);
   color: var(--ink-900);
 }
@@ -445,6 +482,6 @@
 
 .ask-input-row input:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--ink-500);
+  box-shadow: inset 0 0 0 1px var(--ink-500);
 }
