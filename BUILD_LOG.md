@@ -1581,3 +1581,34 @@ machine) was verified live.
   and fixing the button-spacing bug live before committing.
   `python webapp/backend/test_figjam.py`: 60/60 passing - pure CSS
   change, no HTML/JS touched.
+
+## Cumulative token usage across the whole project (real, measured)
+
+Earlier entries in this log noted "exact token usage unavailable in
+session" for individual sessions, since no cumulative counter was exposed
+mid-conversation. The user ran `npx ccusage@latest daily --since 20260911`
+locally against the real Claude Code CLI usage logs, giving an
+authoritative day-by-day total for the entire capstone project to date
+(all agent/model usage on this machine, not just this repo, but this has
+been the only active project on it):
+
+| Date | Input | Output | Cache Create | Cache Read | Total Tokens | Cost (USD) |
+|---|---|---|---|---|---|---|
+| 2026-09-11 | 6 | 1,140 | 14,606 | 157,695 | 173,447 | $0.10 |
+| 2026-09-16 | 70 | 19,742 | 106,824 | 2,806,378 | 2,933,014 | $1.19 |
+| 2026-09-17 | 444 | 127,885 | 441,601 | 36,535,297 | 37,105,227 | $10.35 |
+| 2026-09-18 | 828 | 220,285 | 913,590 | 197,730,579 | 198,865,282 | $45.40 |
+| 2026-09-19 | 682 | 181,921 | 3,394,607 | 190,842,522 | 194,419,732 | $53.57 |
+| 2026-09-22 | 476 | 163,460 | 1,209,225 | 83,448,006 | 84,821,167 | $23.16 |
+| 2026-09-23 | 960 | 371,905 | 3,370,613 | 302,182,890 | 305,926,368 | $77.64 |
+| 2026-09-24 | 450 | 147,005 | 2,671,499 | 82,133,383 | 84,952,337 | $28.58 |
+| 2026-09-25 | 354 | 148,223 | 2,105,534 | 104,658,609 | 106,912,720 | $30.58 |
+| **Total** | **4,270** | **1,381,566** | **14,228,099** | **1,000,495,359** | **1,016,109,294** | **$270.58** |
+
+The overwhelming majority (~98.5%) is cache-read tokens, not fresh
+input/output - this reflects prompt caching working as intended across a
+long-running, many-session conversation (this project's CLAUDE.md/memory
+files and prior conversation context get reused rather than resent in
+full each turn), not 1 billion tokens' worth of new content actually
+generated. Fresh output tokens (the actual text/code produced) total
+~1.38M across the whole project.
