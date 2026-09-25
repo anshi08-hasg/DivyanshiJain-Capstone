@@ -50,7 +50,7 @@
 }
 
 .confidence-strong { background: var(--accent-soft); color: var(--accent-strong); }
-.confidence-medium { background: #fff3cf; color: #8a6300; }
+.confidence-medium { background: var(--warn-soft); color: var(--warn-strong); }
 .confidence-limited, .confidence-insufficient { background: var(--warn-soft); color: var(--warn); }
 
 .persona-grid {
@@ -257,9 +257,15 @@
 }
 
 .persona-preview-canvas-wrap {
+  /* The persona export is a deliberately light, presentation-ready
+     artifact - a few pixels of pale "matting" around it reads as a photo
+     mounted in a frame against the dark dashboard, rather than a stark
+     white rectangle butting straight up against dark chrome. */
   border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--line);
+  background: #e5e7eb;
+  padding: 6px;
   line-height: 0;
 }
 
@@ -267,6 +273,7 @@
   display: block;
   width: 100%;
   height: auto;
+  border-radius: 4px;
 }
 
 .persona-preview-card-error {
@@ -363,7 +370,7 @@
 }
 
 .verdict-validated { background: var(--accent-soft); color: var(--accent-strong); }
-.verdict-weak { background: #fff3cf; color: #8a6300; }
+.verdict-weak { background: var(--warn-soft); color: var(--warn-strong); }
 .verdict-contradictory { background: var(--danger-soft); color: var(--danger); }
 
 .critic-note {
@@ -376,9 +383,9 @@
 }
 
 .decision-row button.active[data-decision="challenge"] {
-  background: #fdeee0;
-  border-color: #c15b1a;
-  color: #a04a12;
+  background: rgba(249, 115, 22, 0.18);
+  border-color: #f97316;
+  color: #fb923c;
 }
 
 .ask-transcript {
@@ -426,6 +433,14 @@
   padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-900);
+}
+
+.ask-input-row input::placeholder,
+.participant-id::placeholder,
+.participant-notes::placeholder {
+  color: var(--ink-300);
 }
 
 .ask-input-row input:focus {
