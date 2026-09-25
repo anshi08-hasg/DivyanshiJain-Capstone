@@ -1493,3 +1493,122 @@ machine) was verified live.
   insights/contradictions/research gaps/design opportunities → "Push to
   FigJam" flow in one action, with no "Analyze research" button anywhere
   on the page.
+
+## figmaconnecttry branch — Redesigned the UI as a dark, premium dashboard
+
+### What shipped
+- User asked for a visual/aesthetic pass: "make the UI look like a pro
+  designer... aesthetic." Given a choice of three directions (refined
+  minimal, bold editorial, or dark premium dashboard), the user picked
+  dark premium dashboard.
+- Reworked the shared design tokens in `style.css` (`:root`) - deep
+  near-black background with a soft accent-glow gradient, layered dark
+  surfaces (panel lighter than page, inputs recessed darker than panel),
+  near-white/light-gray text scale, and a brighter green accent reserved
+  for glows/borders/badges/text-on-dark. Since both `index.html` and
+  `figjam.html` already consumed these variables consistently, this
+  cascaded across the whole app via a pure CSS change - no HTML/JS
+  touched.
+- Added recurring signature details: a small glowing accent-dot marker
+  before every section heading, glowing halos on featured CTAs, glass-card
+  panel treatment, a dark custom scrollbar, and a light "matting" frame
+  around persona PNG previews so the intentionally-light exported artifact
+  reads as a mounted photo against the dark dashboard.
+
+### What broke / what changed
+- `.edit-field` and `.ask-input-row input` had no explicit background/text
+  color at all - they'd have rendered as glaring white boxes with
+  invisible dark-on-dark text against the new theme. Fixed.
+- Filled accent buttons previously used white text on the accent green;
+  measured contrast (~2.3:1) was too low to read cleanly, so switched to
+  dark text on the bright accent fill (~8.7:1).
+- Several hardcoded light-mode status colors (edited/challenged/weak/
+  medium-confidence) would have been illegible or clashing on dark -
+  replaced with dark-appropriate translucent tints.
+
+### Test evidence
+- Verified live via headless-Chrome screenshots against the actual
+  running app (mock provider, demo board): empty and filled Pattern
+  Analyzer states, all four decision-button active states, the final
+  report, and the full FigJam flow through personas/evidence-panel/PNG
+  previews/debug table. `python webapp/backend/test_figjam.py`: 60/60
+  passing, unchanged (pure CSS change).
+
+## figmaconnecttry branch — Redesigned as "Precision Monochrome" - no neon, no glow
+
+### What shipped
+- User rejected the dark-premium-dashboard pass above as "too simple" and
+  asked for something more advanced/modern, explicitly with no glowing
+  lights on buttons - "like a pro UI designer with 20+ years of
+  experience." Ultracode was on for this turn, so the redesign ran through
+  a Workflow: 4 independent design directions (Editorial Swiss, Refined
+  SaaS Precision, Warm Sophisticated Neutral, High-Contrast Monochrome),
+  each proposed by its own agent, each independently scored by 3 judge
+  agents on modern/advanced feel, zero-neon restraint, legibility, and
+  system coherence, then synthesized into one implementable spec.
+- High-Contrast Monochrome won 2 of 3 judge panels outright. The
+  synthesis pulled true `#000`/`#fff` back to `#0a0a0b`/`#f5f5f3` (every
+  judge flagged pure black/white as an eye-fatigue risk for a tool
+  researchers stare at for hours) and grafted in the strongest details
+  from the other three directions - most notably an oversized hanging
+  quote-glyph on persona evidence excerpts, every judge's favorite single
+  detail across all four proposals.
+- Implemented the synthesis: one accent color total (a desaturated bone/
+  paper tone with no saturated hue component, structurally incapable of
+  reading as neon), reserved for exactly one filled action per screen.
+  Zero colored/glowing shadows anywhere - every `box-shadow` is now
+  `rgba(0,0,0,...)` or a plain inset edge; elevation comes from a
+  lightness step + hairline border only. Every badge/chip (confidence,
+  verdict, status, decision buttons) converted to outline-only -
+  transparent background, colored border+text, never a filled/tinted
+  chip, a hard rule with zero exceptions (every judge flagged a runner-up
+  direction's one filled-green badge as the last trace of the old neon
+  system). Also added a real type scale, a 4px-based spacing system, and
+  exactly 3 border-radii (2/4/8px, replacing the old soft 12-16px).
+
+### What broke / what changed
+- Caught and fixed two real bugs surfaced during implementation, not just
+  re-themed around them: the loading spinner was white and would have
+  been invisible against the new light button fill (made dark instead),
+  and a pre-existing gap-collapse between the pairing-code and connect
+  buttons that the old glow's blur radius had been visually masking
+  became visible once the glow was removed - added the missing margin.
+
+### Test evidence
+- Full headless-Chrome pass across both pages and every real state
+  (empty/filled forms, all decision-button states, final report, full
+  FigJam connect→analyze→review→personas→evidence-panel flow), catching
+  and fixing the button-spacing bug live before committing.
+  `python webapp/backend/test_figjam.py`: 60/60 passing - pure CSS
+  change, no HTML/JS touched.
+
+## Cumulative token usage across the whole project (real, measured)
+
+Earlier entries in this log noted "exact token usage unavailable in
+session" for individual sessions, since no cumulative counter was exposed
+mid-conversation. The user ran `npx ccusage@latest daily --since 20260911`
+locally against the real Claude Code CLI usage logs, giving an
+authoritative day-by-day total for the entire capstone project to date
+(all agent/model usage on this machine, not just this repo, but this has
+been the only active project on it):
+
+| Date | Input | Output | Cache Create | Cache Read | Total Tokens | Cost (USD) |
+|---|---|---|---|---|---|---|
+| 2026-09-11 | 6 | 1,140 | 14,606 | 157,695 | 173,447 | $0.10 |
+| 2026-09-16 | 70 | 19,742 | 106,824 | 2,806,378 | 2,933,014 | $1.19 |
+| 2026-09-17 | 444 | 127,885 | 441,601 | 36,535,297 | 37,105,227 | $10.35 |
+| 2026-09-18 | 828 | 220,285 | 913,590 | 197,730,579 | 198,865,282 | $45.40 |
+| 2026-09-19 | 682 | 181,921 | 3,394,607 | 190,842,522 | 194,419,732 | $53.57 |
+| 2026-09-22 | 476 | 163,460 | 1,209,225 | 83,448,006 | 84,821,167 | $23.16 |
+| 2026-09-23 | 960 | 371,905 | 3,370,613 | 302,182,890 | 305,926,368 | $77.64 |
+| 2026-09-24 | 450 | 147,005 | 2,671,499 | 82,133,383 | 84,952,337 | $28.58 |
+| 2026-09-25 | 354 | 148,223 | 2,105,534 | 104,658,609 | 106,912,720 | $30.58 |
+| **Total** | **4,270** | **1,381,566** | **14,228,099** | **1,000,495,359** | **1,016,109,294** | **$270.58** |
+
+The overwhelming majority (~98.5%) is cache-read tokens, not fresh
+input/output - this reflects prompt caching working as intended across a
+long-running, many-session conversation (this project's CLAUDE.md/memory
+files and prior conversation context get reused rather than resent in
+full each turn), not 1 billion tokens' worth of new content actually
+generated. Fresh output tokens (the actual text/code produced) total
+~1.38M across the whole project.
